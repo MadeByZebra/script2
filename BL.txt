@@ -2215,6 +2215,23 @@ TrainTab:CreateButton({
         end
     end,
 })
+TrainTab:CreateSection("Need a Key?")
+TrainTab:CreateParagraph({
+    Title   = "Script Requires a Key?",
+    Content = "Some scripts require a key to run. If the Auto Train script asks for one, you can use bypass.tools to skip it — copy the link below and open it in your browser.",
+})
+TrainTab:CreateButton({
+    Name     = "Copy bypass.tools Link 🔑",
+    Callback = function()
+        setclipboard("https://bypass.tools/")
+        Rayfield:Notify({
+            Title   = "Link Copied! 🔑",
+            Content = "Paste https://bypass.tools/ in your browser to bypass the key.",
+            Duration = 4,
+            Image   = 4483362458,
+        })
+    end,
+})
 TrainTab:CreateSection("Info")
 TrainTab:CreateLabel("Click Launch once per session.")
 TrainTab:CreateLabel("Requires HTTP permissions to be enabled in your executor.")
