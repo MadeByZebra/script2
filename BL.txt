@@ -1,0 +1,2492 @@
+--// Services \\--
+local Workspace         = game:GetService("Workspace")
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local GuiService        = game:GetService("GuiService")
+local VIM               = game:GetService("VirtualInputManager")
+local UIS               = game:GetService("UserInputService")
+local RunService        = game:GetService("RunService")
+local TeleportService   = game:GetService("TeleportService")
+local VirtualUser       = game:GetService("VirtualUser")
+local CoreGui           = game:GetService("CoreGui")
+local TweenService      = game:GetService("TweenService")
+
+--// Variables \\--
+local Player    = Players.LocalPlayer
+local playerGui = Player:WaitForChild("PlayerGui")
+local Machinery = Workspace:WaitForChild("Machinery")
+local GymUse    = ReplicatedStorage:WaitForChild("Action"):WaitForChild("GymUse")
+local Camera    = Workspace.CurrentCamera
+
+--// Set this to your raw script URL for auto-reload on rejoin \\--
+local SCRIPT_URL = "https://raw.githubusercontent.com/YourUser/YourRepo/main/BoxingLeague.lua"
+
+--// Rayfield UI Library \\--
+local Rayfield = loadstring(game:HttpGetAsync('https://sirius.menu/rayfield'))()
+
+-- =============================================
+--// SESSION TIMER \\--
+-- =============================================
+local SessionStart = os.clock()
+
+local function getSessionTime()
+    local elapsed = math.floor(os.clock() - SessionStart)
+    local h = math.floor(elapsed / 3600)
+    local m = math.floor((elapsed % 3600) / 60)
+    local s = elapsed % 60
+    if h > 0 then
+        return string.format("%dh %02dm %02ds", h, m, s)
+    else
+        return string.format("%dm %02ds", m, s)
+    end
+end
+
+-- =============================================
+--// SETTINGS TABLES \\--
+-- =============================================
+
+local ClashSettings = {
+    AutoClash         = false,
+    HighlightOnSelect = true,
+    ClashKeybind      = Enum.KeyCode.F,
+}
+
+local CameraSettings = {
+    BrokenCamera      = false,
+    FrozenCFrame      = nil,
+    RenderConnection  = nil,
+    LockOnKeybind     = Enum.KeyCode.T,
+    CurrentlyFrozen   = false,
+    SubjectConnection = nil,
+}
+
+local AntiAFK = {
+    Enabled = false,
+}
+
+AutoRejoin = {
+    Enabled    = false,
+    Delay      = 5,
+    Method     = "SameServer",
+    Connection = nil,
+    LoadScript = true,
+}
+
+local AutoReconnect = {
+    Enabled           = false,
+    Delay             = 4,
+    CoreGuiConnection = nil,
+    NetworkConnection = nil,
+    KickConnection    = nil,
+}
+
+local RayfieldKeybindSettings = {
+    Key = Enum.KeyCode.RightShift,
+}
+
+local ProfileSettings = {
+    Current = "Default",
+    Names   = { "Default", "Farm Mode", "PvP Mode", "Custom 1", "Custom 2" },
+}
+
+local PROFILE_FOLDER = "ZebraBoxingLeague/Profiles"
+
+local NoclipSettings = {
+    Enabled    = false,
+    Connection = nil,
+}
+
+-- =============================================
+--// CONFIG PROFILES \\--
+-- =============================================
+
+local function ensureFolder(path)
+    pcall(function()
+        if not isfolder(path) then makefolder(path) end
+    end)
+end
+
+local function saveProfile(name)
+    pcall(function()
+        ensureFolder("ZebraBoxingLeague")
+        ensureFolder(PROFILE_FOLDER)
+        local data = {
+            RejoinDelay   = AutoRejoin.Delay,
+            RejoinMethod  = AutoRejoin.Method,
+            RejoinLoad    = AutoRejoin.LoadScript,
+        }
+        local encoded = game:GetService("HttpService"):JSONEncode(data)
+        writefile(PROFILE_FOLDER .. "/" .. name .. ".json", encoded)
+    end)
+end
+
+local function loadProfile(name)
+    local ok = false
+    pcall(function()
+        local path = PROFILE_FOLDER .. "/" .. name .. ".json"
+        if not isfile(path) then return end
+        local data = game:GetService("HttpService"):JSONDecode(readfile(path))
+        if data.RejoinDelay   then AutoRejoin.Delay            = data.RejoinDelay   end
+        if data.RejoinMethod  then AutoRejoin.Method           = data.RejoinMethod  end
+        if data.RejoinLoad   ~= nil then AutoRejoin.LoadScript = data.RejoinLoad    end
+        ok = true
+    end)
+    return ok
+end
+
+-- =============================================
+--// THEME COLORS \\--
+-- =============================================
+local C_BG        = Color3.fromRGB(20,  20,  20)
+local C_SURFACE   = Color3.fromRGB(28,  28,  28)
+local C_CARD      = Color3.fromRGB(35,  35,  35)
+local C_STROKE    = Color3.fromRGB(55,  55,  55)
+local C_TEXT      = Color3.fromRGB(235, 235, 235)
+local C_MUTED     = Color3.fromRGB(155, 155, 155)
+local C_ACCENT    = Color3.fromRGB(50,  138, 220)
+local C_ACCENT_DK = Color3.fromRGB(30,  100, 175)
+local C_GREEN     = Color3.fromRGB(60,  180, 90)
+local C_RED       = Color3.fromRGB(210, 70,  70)
+local C_YELLOW    = Color3.fromRGB(220, 175, 40)
+
+-- =============================================
+--// HELPER: UI utilities \\--
+-- =============================================
+local function makeRound(parent, radius)
+    local c = Instance.new("UICorner", parent)
+    c.CornerRadius = UDim.new(0, radius or 8)
+    return c
+end
+
+local function makeStroke(parent, color, thickness)
+    local s = Instance.new("UIStroke", parent)
+    s.Color = color or C_STROKE
+    s.Thickness = thickness or 1
+    return s
+end
+
+local function makePadding(parent, t, b, l, r)
+    local p = Instance.new("UIPadding", parent)
+    p.PaddingTop    = UDim.new(0, t or 0)
+    p.PaddingBottom = UDim.new(0, b or 0)
+    p.PaddingLeft   = UDim.new(0, l or 0)
+    p.PaddingRight  = UDim.new(0, r or 0)
+    return p
+end
+
+-- =============================================
+--// DEX FARM GUI \\--
+-- =============================================
+
+local dexFarmGui = nil
+local dexFarmOpen = false
+
+local function clearAllBoxHighlights(buttonsTable)
+    for boxName, _ in pairs(buttonsTable) do
+        local model = Workspace.Machinery:FindFirstChild(boxName)
+        if model then
+            local old = model:FindFirstChild("_ZebraBoxSel")
+            if old then old:Destroy() end
+        end
+    end
+end
+
+local function highlightBoxModel(name)
+    local model = Workspace.Machinery:FindFirstChild(name)
+    if model then
+        local sel = Instance.new("SelectionBox")
+        sel.Name               = "_ZebraBoxSel"
+        sel.Adornee            = model
+        sel.Color3             = Color3.fromRGB(220, 60, 20)
+        sel.LineThickness      = 0.06
+        sel.SurfaceTransparency = 0.7
+        sel.SurfaceColor3      = Color3.fromRGB(220, 60, 20)
+        sel.Parent             = model
+    end
+end
+
+local function createDexFarmGui()
+    if dexFarmGui and dexFarmGui.Parent then
+        dexFarmGui.Enabled = true
+        dexFarmOpen = true
+        return
+    end
+
+    local surfaceGui = Workspace.Machinery.BOX1.TV.OO
+    local goalNumber = nil
+    local currentNumber = nil
+    local lowestY = math.huge
+    local highestZ = -math.huge
+    local grindActive = false
+    local selectedBox = "BOX1"
+
+    local highlightEnabled = true
+
+    local function space()
+        local args = { "Yeaichangedit" }
+        GymUse:FireServer(unpack(args))
+    end
+
+    local function m1()
+        local args = { "CL" }
+        GymUse:FireServer(unpack(args))
+    end
+
+    local function getcurrentandgoal()
+        lowestY = math.huge
+        highestZ = -math.huge
+        goalNumber = nil
+        currentNumber = nil
+
+        for _, obj in ipairs(surfaceGui:GetDescendants()) do
+            if obj:IsA("TextLabel")
+                and obj.Visible
+                and obj.BackgroundColor3 == Color3.fromRGB(255, 81, 0)
+                and obj.TextTransparency < 1 then
+                local y = obj.AbsolutePosition.Y
+                if y < lowestY then
+                    lowestY = y
+                    goalNumber = tonumber(obj.Text)
+                end
+            end
+        end
+
+        for _, obj in ipairs(surfaceGui:GetDescendants()) do
+            if obj:IsA("TextLabel")
+                and obj.Visible
+                and obj.TextTransparency < 1
+                and obj.BackgroundColor3 == Color3.fromRGB(27, 42, 53) then
+                if obj.ZIndex > highestZ then
+                    highestZ = obj.ZIndex
+                    currentNumber = obj.Text
+                end
+            end
+        end
+    end
+
+    local function getSafeCurrentNumber()
+        getcurrentandgoal()
+        local n = tonumber(currentNumber)
+        if not n then return 0 end
+        return n
+    end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "DexFarmGui"
+    gui.ResetOnSpawn = false
+    gui.DisplayOrder = 997
+    gui.IgnoreGuiInset = true
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Parent = playerGui
+    dexFarmGui = gui
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.fromOffset(320, 0)
+    frame.Position = UDim2.new(0.5, -160, 0.5, -200)
+    frame.BackgroundColor3 = C_BG
+    frame.BackgroundTransparency = 0.04
+    frame.BorderSizePixel = 0
+    frame.AutomaticSize = Enum.AutomaticSize.Y
+    frame.Active = true
+    frame.Parent = gui
+    makeRound(frame, 10)
+    makeStroke(frame, C_STROKE, 1.2)
+
+    local frameLayout = Instance.new("UIListLayout", frame)
+    frameLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    frameLayout.Padding = UDim.new(0, 0)
+
+    local accentLine = Instance.new("Frame", frame)
+    accentLine.Size = UDim2.new(1, 0, 0, 3)
+    accentLine.BackgroundColor3 = C_ACCENT
+    accentLine.BorderSizePixel = 0
+    accentLine.LayoutOrder = -1
+    makeRound(accentLine, 3)
+
+    local titleBar = Instance.new("Frame", frame)
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 42)
+    titleBar.BackgroundColor3 = C_SURFACE
+    titleBar.BorderSizePixel = 0
+    titleBar.LayoutOrder = 0
+    makeRound(titleBar, 10)
+
+    local tbFill = Instance.new("Frame", titleBar)
+    tbFill.Size = UDim2.new(1, 0, 0.5, 0)
+    tbFill.Position = UDim2.new(0, 0, 0.5, 0)
+    tbFill.BackgroundColor3 = C_SURFACE
+    tbFill.BorderSizePixel = 0
+
+    local tbDivider = Instance.new("Frame", titleBar)
+    tbDivider.Size = UDim2.new(1, 0, 0, 1)
+    tbDivider.Position = UDim2.new(0, 0, 1, -1)
+    tbDivider.BackgroundColor3 = C_STROKE
+    tbDivider.BorderSizePixel = 0
+
+    local iconBadge = Instance.new("Frame", titleBar)
+    iconBadge.Size = UDim2.new(0, 26, 0, 26)
+    iconBadge.Position = UDim2.new(0, 10, 0.5, -13)
+    iconBadge.BackgroundColor3 = C_ACCENT
+    iconBadge.BorderSizePixel = 0
+    makeRound(iconBadge, 6)
+    makeStroke(iconBadge, Color3.fromRGB(80, 170, 255), 1)
+
+    local titleIcon = Instance.new("TextLabel", iconBadge)
+    titleIcon.Size = UDim2.new(1, 0, 1, 0)
+    titleIcon.BackgroundTransparency = 1
+    titleIcon.Text = "🥊"
+    titleIcon.TextSize = 13
+    titleIcon.Font = Enum.Font.GothamBold
+    titleIcon.TextXAlignment = Enum.TextXAlignment.Center
+
+    local titleStack = Instance.new("Frame", titleBar)
+    titleStack.Size = UDim2.new(1, -100, 1, 0)
+    titleStack.Position = UDim2.new(0, 44, 0, 0)
+    titleStack.BackgroundTransparency = 1
+    local titleStackLayout = Instance.new("UIListLayout", titleStack)
+    titleStackLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    titleStackLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+    titleStackLayout.Padding = UDim.new(0, 0)
+
+    local titleLabel = Instance.new("TextLabel", titleStack)
+    titleLabel.Size = UDim2.new(1, 0, 0, 18)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = "Dex Farm"
+    titleLabel.TextColor3 = C_TEXT
+    titleLabel.TextSize = 13
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.LayoutOrder = 0
+
+    local subLabel = Instance.new("TextLabel", titleStack)
+    subLabel.Size = UDim2.new(1, 0, 0, 13)
+    subLabel.BackgroundTransparency = 1
+    subLabel.Text = "Auto punching bag trainer"
+    subLabel.TextColor3 = C_MUTED
+    subLabel.TextSize = 10
+    subLabel.Font = Enum.Font.Gotham
+    subLabel.TextXAlignment = Enum.TextXAlignment.Left
+    subLabel.LayoutOrder = 1
+
+    local closeBtn = Instance.new("TextButton", titleBar)
+    closeBtn.Size = UDim2.new(0, 22, 0, 22)
+    closeBtn.Position = UDim2.new(1, -30, 0.5, -11)
+    closeBtn.BackgroundColor3 = C_CARD
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = C_MUTED
+    closeBtn.TextSize = 11
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.BorderSizePixel = 0
+    makeRound(closeBtn, 5)
+    makeStroke(closeBtn, C_STROKE, 1)
+
+    closeBtn.MouseEnter:Connect(function()
+        TweenService:Create(closeBtn, TweenInfo.new(0.12), { BackgroundColor3 = C_RED, TextColor3 = C_TEXT }):Play()
+    end)
+    closeBtn.MouseLeave:Connect(function()
+        TweenService:Create(closeBtn, TweenInfo.new(0.12), { BackgroundColor3 = C_CARD, TextColor3 = C_MUTED }):Play()
+    end)
+
+    local body = Instance.new("Frame", frame)
+    body.Size = UDim2.new(1, 0, 0, 0)
+    body.BackgroundTransparency = 1
+    body.AutomaticSize = Enum.AutomaticSize.Y
+    body.LayoutOrder = 1
+    makePadding(body, 12, 14, 12, 12)
+
+    local bodyLayout = Instance.new("UIListLayout", body)
+    bodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    bodyLayout.Padding = UDim.new(0, 8)
+
+    local sectionBox = Instance.new("TextLabel", body)
+    sectionBox.Size = UDim2.new(1, 0, 0, 16)
+    sectionBox.BackgroundTransparency = 1
+    sectionBox.Text = "SELECT BAG"
+    sectionBox.TextColor3 = C_MUTED
+    sectionBox.TextSize = 10
+    sectionBox.Font = Enum.Font.GothamBold
+    sectionBox.TextXAlignment = Enum.TextXAlignment.Left
+    sectionBox.LayoutOrder = 0
+
+    local boxRow = Instance.new("Frame", body)
+    boxRow.Size = UDim2.new(1, 0, 0, 44)
+    boxRow.BackgroundTransparency = 1
+    boxRow.LayoutOrder = 1
+    local boxRowLayout = Instance.new("UIListLayout", boxRow)
+    boxRowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    boxRowLayout.FillDirection = Enum.FillDirection.Horizontal
+    boxRowLayout.Padding = UDim.new(0, 8)
+
+    local BOX_ACTIVE_COLOR   = Color3.fromRGB(180, 55, 20)
+    local BOX_INACTIVE_COLOR = C_CARD
+
+    local boxButtons = {}
+
+    local function setActiveBox(name, btn)
+        selectedBox = name
+        surfaceGui = Workspace.Machinery[name].TV.OO
+        getcurrentandgoal()
+
+        clearAllBoxHighlights(boxButtons)
+
+        if highlightEnabled then
+            highlightBoxModel(name)
+        end
+
+        for _, b in pairs(boxButtons) do
+            TweenService:Create(b, TweenInfo.new(0.15), { BackgroundColor3 = BOX_INACTIVE_COLOR }):Play()
+        end
+        TweenService:Create(btn, TweenInfo.new(0.15), { BackgroundColor3 = BOX_ACTIVE_COLOR }):Play()
+
+        Rayfield:Notify({
+            Title   = "Bag Selected 🥊",
+            Content = name .. " selected" .. (highlightEnabled and " — highlighted in world." or "."),
+            Duration = 2,
+            Image   = 4483362458,
+        })
+    end
+
+    local function makeBoxBtn(name, order)
+        local btn = Instance.new("TextButton", boxRow)
+        btn.Size = UDim2.new(0, 86, 1, 0)
+        btn.BackgroundColor3 = BOX_INACTIVE_COLOR
+        btn.Text = name
+        btn.TextColor3 = C_TEXT
+        btn.TextSize = 12
+        btn.Font = Enum.Font.GothamBold
+        btn.BorderSizePixel = 0
+        btn.LayoutOrder = order
+        makeRound(btn, 8)
+        makeStroke(btn, C_STROKE, 1)
+
+        boxButtons[name] = btn
+
+        btn.MouseButton1Click:Connect(function()
+            setActiveBox(name, btn)
+        end)
+        btn.MouseEnter:Connect(function()
+            if selectedBox ~= name then
+                TweenService:Create(btn, TweenInfo.new(0.12), { BackgroundColor3 = Color3.fromRGB(50, 50, 50) }):Play()
+            end
+        end)
+        btn.MouseLeave:Connect(function()
+            if selectedBox ~= name then
+                TweenService:Create(btn, TweenInfo.new(0.12), { BackgroundColor3 = BOX_INACTIVE_COLOR }):Play()
+            end
+        end)
+        return btn
+    end
+
+    local btn1 = makeBoxBtn("BOX1", 0)
+    local btn2 = makeBoxBtn("BOX2", 1)
+    local btn3 = makeBoxBtn("BOX3", 2)
+
+    TweenService:Create(btn1, TweenInfo.new(0.15), { BackgroundColor3 = BOX_ACTIVE_COLOR }):Play()
+    highlightBoxModel("BOX1")
+
+    local highlightToggleCard = Instance.new("Frame", body)
+    highlightToggleCard.Name             = "HighlightToggleCard"
+    highlightToggleCard.Size             = UDim2.new(1, 0, 0, 44)
+    highlightToggleCard.BackgroundColor3 = C_CARD
+    highlightToggleCard.BorderSizePixel  = 0
+    highlightToggleCard.LayoutOrder      = 2
+    makeRound(highlightToggleCard, 8)
+    makeStroke(highlightToggleCard, C_STROKE, 1)
+
+    local hlLeft = Instance.new("Frame", highlightToggleCard)
+    hlLeft.Size                   = UDim2.new(1, -70, 1, 0)
+    hlLeft.Position               = UDim2.new(0, 12, 0, 0)
+    hlLeft.BackgroundTransparency = 1
+    local hlLeftLayout = Instance.new("UIListLayout", hlLeft)
+    hlLeftLayout.SortOrder         = Enum.SortOrder.LayoutOrder
+    hlLeftLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+    hlLeftLayout.Padding           = UDim.new(0, 2)
+
+    local hlLabel = Instance.new("TextLabel", hlLeft)
+    hlLabel.Size                   = UDim2.new(1, 0, 0, 16)
+    hlLabel.BackgroundTransparency = 1
+    hlLabel.Text                   = "Bag Highlight"
+    hlLabel.TextColor3             = C_TEXT
+    hlLabel.TextSize               = 12
+    hlLabel.Font                   = Enum.Font.GothamBold
+    hlLabel.TextXAlignment         = Enum.TextXAlignment.Left
+    hlLabel.LayoutOrder            = 0
+
+    local hlHint = Instance.new("TextLabel", hlLeft)
+    hlHint.Size                   = UDim2.new(1, 0, 0, 11)
+    hlHint.BackgroundTransparency = 1
+    hlHint.Text                   = "Orange-red glow on selected bag"
+    hlHint.TextColor3             = C_MUTED
+    hlHint.TextSize               = 10
+    hlHint.Font                   = Enum.Font.Gotham
+    hlHint.TextXAlignment         = Enum.TextXAlignment.Left
+    hlHint.LayoutOrder            = 1
+
+    local hlPill = Instance.new("Frame", highlightToggleCard)
+    hlPill.Size             = UDim2.new(0, 46, 0, 26)
+    hlPill.Position         = UDim2.new(1, -58, 0.5, -13)
+    hlPill.BackgroundColor3 = C_ACCENT
+    hlPill.BorderSizePixel  = 0
+    makeRound(hlPill, 13)
+
+    local hlThumb = Instance.new("Frame", hlPill)
+    hlThumb.Size             = UDim2.new(0, 20, 0, 20)
+    hlThumb.Position         = UDim2.new(1, -23, 0.5, -10)
+    hlThumb.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    hlThumb.BorderSizePixel  = 0
+    makeRound(hlThumb, 10)
+
+    local hlBtn = Instance.new("TextButton", highlightToggleCard)
+    hlBtn.Size                   = UDim2.new(1, 0, 1, 0)
+    hlBtn.BackgroundTransparency = 1
+    hlBtn.Text                   = ""
+
+    local function setHighlightPill(on)
+        TweenService:Create(hlPill, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {
+            BackgroundColor3 = on and C_ACCENT or C_STROKE,
+        }):Play()
+        TweenService:Create(hlThumb, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {
+            Position = on and UDim2.new(1, -23, 0.5, -10) or UDim2.new(0, 3, 0.5, -10),
+        }):Play()
+    end
+
+    hlBtn.MouseButton1Click:Connect(function()
+        highlightEnabled = not highlightEnabled
+        setHighlightPill(highlightEnabled)
+        if highlightEnabled then
+            highlightBoxModel(selectedBox)
+            Rayfield:Notify({ Title = "Highlight ON 🟠", Content = "Bag highlights re-enabled.", Duration = 2, Image = 4483362458 })
+        else
+            clearAllBoxHighlights(boxButtons)
+            Rayfield:Notify({ Title = "Highlight OFF", Content = "Bag highlights cleared.", Duration = 2, Image = 4483362458 })
+        end
+    end)
+
+    closeBtn.MouseButton1Click:Connect(function()
+        grindActive = false
+        clearAllBoxHighlights(boxButtons)
+        gui.Enabled = false
+        dexFarmOpen = false
+    end)
+
+    local statusCard = Instance.new("Frame", body)
+    statusCard.Size = UDim2.new(1, 0, 0, 40)
+    statusCard.BackgroundColor3 = C_CARD
+    statusCard.BorderSizePixel = 0
+    statusCard.LayoutOrder = 3
+    makeRound(statusCard, 8)
+    makeStroke(statusCard, C_STROKE, 1)
+
+    local statusAccent = Instance.new("Frame", statusCard)
+    statusAccent.Size = UDim2.new(0, 3, 1, -12)
+    statusAccent.Position = UDim2.new(0, 0, 0, 6)
+    statusAccent.BackgroundColor3 = C_MUTED
+    statusAccent.BorderSizePixel = 0
+    makeRound(statusAccent, 2)
+
+    local statusDot = Instance.new("Frame", statusCard)
+    statusDot.Size = UDim2.new(0, 8, 0, 8)
+    statusDot.Position = UDim2.new(0, 14, 0.5, -4)
+    statusDot.BackgroundColor3 = C_MUTED
+    statusDot.BorderSizePixel = 0
+    makeRound(statusDot, 4)
+
+    local statusLabel = Instance.new("TextLabel", statusCard)
+    statusLabel.Size = UDim2.new(1, -36, 1, 0)
+    statusLabel.Position = UDim2.new(0, 32, 0, 0)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "Idle — not grinding"
+    statusLabel.TextColor3 = C_MUTED
+    statusLabel.TextSize = 11
+    statusLabel.Font = Enum.Font.GothamMedium
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+    local grindBtn = Instance.new("TextButton", body)
+    grindBtn.Size = UDim2.new(1, 0, 0, 46)
+    grindBtn.BackgroundColor3 = C_ACCENT
+    grindBtn.Text = "▶  START GRIND"
+    grindBtn.TextColor3 = C_TEXT
+    grindBtn.TextSize = 13
+    grindBtn.Font = Enum.Font.GothamBold
+    grindBtn.BorderSizePixel = 0
+    grindBtn.LayoutOrder = 4
+    makeRound(grindBtn, 10)
+    makeStroke(grindBtn, Color3.fromRGB(80, 170, 255), 1)
+
+    grindBtn.MouseEnter:Connect(function()
+        if not grindActive then
+            TweenService:Create(grindBtn, TweenInfo.new(0.12), { BackgroundColor3 = C_ACCENT_DK }):Play()
+        end
+    end)
+    grindBtn.MouseLeave:Connect(function()
+        if not grindActive then
+            TweenService:Create(grindBtn, TweenInfo.new(0.12), { BackgroundColor3 = C_ACCENT }):Play()
+        end
+    end)
+
+    local dotPulse = false
+    task.spawn(function()
+        while gui and gui.Parent do
+            task.wait(1.4)
+            if dotPulse and statusDot and statusDot.Parent then
+                TweenService:Create(statusDot, TweenInfo.new(0.5, Enum.EasingStyle.Sine), { BackgroundTransparency = 0.65 }):Play()
+                task.wait(0.5)
+                TweenService:Create(statusDot, TweenInfo.new(0.5, Enum.EasingStyle.Sine), { BackgroundTransparency = 0 }):Play()
+            end
+        end
+    end)
+
+    grindBtn.MouseButton1Click:Connect(function()
+        if grindActive then
+            grindActive = false
+            grindBtn.Text = "▶  START GRIND"
+            TweenService:Create(grindBtn, TweenInfo.new(0.2), { BackgroundColor3 = C_ACCENT }):Play()
+            TweenService:Create(accentLine, TweenInfo.new(0.3), { BackgroundColor3 = C_ACCENT }):Play()
+            dotPulse = false
+            statusDot.BackgroundColor3 = C_MUTED
+            statusAccent.BackgroundColor3 = C_MUTED
+            statusLabel.Text = "Idle — not grinding"
+            statusLabel.TextColor3 = C_MUTED
+            Rayfield:Notify({ Title = "Dex Farm Stopped ⛔", Content = "Grind halted.", Duration = 2, Image = 4483362458 })
+        else
+            grindActive = true
+            grindBtn.Text = "⏹  STOP GRIND"
+            TweenService:Create(grindBtn, TweenInfo.new(0.2), { BackgroundColor3 = C_RED }):Play()
+            TweenService:Create(accentLine, TweenInfo.new(0.3), { BackgroundColor3 = C_GREEN }):Play()
+            dotPulse = true
+            statusDot.BackgroundColor3 = C_GREEN
+            statusAccent.BackgroundColor3 = C_GREEN
+            statusLabel.Text = "Active — grinding " .. selectedBox
+            statusLabel.TextColor3 = C_GREEN
+            Rayfield:Notify({ Title = "Dex Farm Started 🥊", Content = "Grinding " .. selectedBox .. "...", Duration = 3, Image = 4483362458 })
+
+            task.spawn(function()
+                while grindActive do
+                    local current = getSafeCurrentNumber()
+                    if not goalNumber or goalNumber <= 0 then
+                        statusLabel.Text = "Waiting for target number..."
+                        task.wait(1)
+                        continue
+                    end
+                    if current >= goalNumber then
+                        grindActive = false
+                        grindBtn.Text = "▶  START GRIND"
+                        TweenService:Create(grindBtn, TweenInfo.new(0.2), { BackgroundColor3 = C_ACCENT }):Play()
+                        TweenService:Create(accentLine, TweenInfo.new(0.3), { BackgroundColor3 = C_ACCENT }):Play()
+                        dotPulse = false
+                        statusDot.BackgroundColor3 = C_GREEN
+                        statusAccent.BackgroundColor3 = C_GREEN
+                        statusLabel.Text = "✅ Goal reached!"
+                        statusLabel.TextColor3 = C_GREEN
+                        Rayfield:Notify({ Title = "Goal Reached! ✅", Content = selectedBox .. " grind complete.", Duration = 4, Image = 4483362458 })
+                        break
+                    end
+                    local gerekenSpace = (goalNumber - current) // 100
+                    if gerekenSpace > 0 then
+                        space()
+                        task.wait(0.75)
+                    else
+                        m1()
+                        task.wait(0.10)
+                    end
+                    local cur2 = getSafeCurrentNumber()
+                    if goalNumber and goalNumber > 0 then
+                        statusLabel.Text = string.format("Grinding %s — %d / %d", selectedBox, cur2, goalNumber)
+                    end
+                end
+            end)
+        end
+    end)
+
+    local function makeInfoRow(icon, title, desc, order)
+        local card = Instance.new("Frame", body)
+        card.Size = UDim2.new(1, 0, 0, 44)
+        card.BackgroundColor3 = C_CARD
+        card.BorderSizePixel = 0
+        card.LayoutOrder = 5 + order
+        makeRound(card, 8)
+        makeStroke(card, C_STROKE, 1)
+
+        local iconBox = Instance.new("Frame", card)
+        iconBox.Size = UDim2.new(0, 30, 0, 30)
+        iconBox.Position = UDim2.new(0, 8, 0.5, -15)
+        iconBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        iconBox.BorderSizePixel = 0
+        makeRound(iconBox, 7)
+
+        local iconLbl = Instance.new("TextLabel", iconBox)
+        iconLbl.Size = UDim2.new(1, 0, 1, 0)
+        iconLbl.BackgroundTransparency = 1
+        iconLbl.Text = icon
+        iconLbl.TextSize = 14
+        iconLbl.Font = Enum.Font.GothamBold
+        iconLbl.TextXAlignment = Enum.TextXAlignment.Center
+
+        local textStack = Instance.new("Frame", card)
+        textStack.Size = UDim2.new(1, -52, 1, 0)
+        textStack.Position = UDim2.new(0, 46, 0, 0)
+        textStack.BackgroundTransparency = 1
+        local tl = Instance.new("UIListLayout", textStack)
+        tl.SortOrder = Enum.SortOrder.LayoutOrder
+        tl.VerticalAlignment = Enum.VerticalAlignment.Center
+        tl.Padding = UDim.new(0, 2)
+
+        local t1 = Instance.new("TextLabel", textStack)
+        t1.Size = UDim2.new(1, 0, 0, 15)
+        t1.BackgroundTransparency = 1
+        t1.Text = title
+        t1.TextColor3 = C_TEXT
+        t1.TextSize = 11
+        t1.Font = Enum.Font.GothamMedium
+        t1.TextXAlignment = Enum.TextXAlignment.Left
+        t1.LayoutOrder = 0
+
+        local t2 = Instance.new("TextLabel", textStack)
+        t2.Size = UDim2.new(1, 0, 0, 13)
+        t2.BackgroundTransparency = 1
+        t2.Text = desc
+        t2.TextColor3 = C_MUTED
+        t2.TextSize = 10
+        t2.Font = Enum.Font.Gotham
+        t2.TextXAlignment = Enum.TextXAlignment.Left
+        t2.LayoutOrder = 1
+
+        return card
+    end
+
+    makeInfoRow("🎯", "Orange Number Target", "Reads the orange goal from the bag TV", 0)
+    makeInfoRow("⚡", "Heavy + Light Hits", "Uses space (×100) then m1 for remainder", 1)
+    makeInfoRow("🔁", "Auto Stops on Goal", "Stops automatically when target is reached", 2)
+
+    local divider = Instance.new("Frame", body)
+    divider.Size = UDim2.new(1, 0, 0, 1)
+    divider.BackgroundColor3 = C_STROKE
+    divider.BackgroundTransparency = 0.4
+    divider.BorderSizePixel = 0
+    divider.LayoutOrder = 10
+
+    local footer = Instance.new("TextLabel", body)
+    footer.Size = UDim2.new(1, 0, 0, 14)
+    footer.BackgroundTransparency = 1
+    footer.Text = "by Zebra · Dex Farm v2 — Built-In"
+    footer.TextColor3 = Color3.fromRGB(70, 70, 70)
+    footer.TextSize = 10
+    footer.Font = Enum.Font.Gotham
+    footer.TextXAlignment = Enum.TextXAlignment.Center
+    footer.LayoutOrder = 11
+
+    local dragging, dragStart, startPos = false, nil, nil
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            local d = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    dexFarmOpen = true
+end
+
+-- =============================================
+--// ANTI AFK \\--
+-- =============================================
+
+local afkEnabled   = false
+local afkThread    = nil
+local afkPanelOpen = false
+
+local function afkLoop()
+    while afkEnabled do
+        pcall(function() VirtualUser:CaptureController() end)
+        pcall(function() VirtualUser:ClickButton2(Vector2.new()) end)
+        task.wait(15)
+    end
+end
+
+local function startAFK()
+    if afkThread then return end
+    afkThread = task.spawn(afkLoop)
+end
+
+local function stopAFK()
+    afkEnabled = false
+    afkThread  = nil
+end
+
+local AFKGui = Instance.new("ScreenGui")
+AFKGui.Name           = "AFKGui"
+AFKGui.ResetOnSpawn   = false
+AFKGui.DisplayOrder   = 998
+AFKGui.IgnoreGuiInset = true
+AFKGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+AFKGui.Parent         = playerGui
+
+local AFKShadow = Instance.new("Frame")
+AFKShadow.Name                   = "Shadow"
+AFKShadow.Size                   = UDim2.new(0, 274, 0, 10)
+AFKShadow.Position               = UDim2.new(0, 7, 0, 108)
+AFKShadow.BackgroundColor3       = Color3.fromRGB(0, 0, 0)
+AFKShadow.BackgroundTransparency = 0.7
+AFKShadow.BorderSizePixel        = 0
+AFKShadow.Visible                = false
+AFKShadow.Parent                 = AFKGui
+makeRound(AFKShadow, 12)
+
+local AFKPanel = Instance.new("Frame")
+AFKPanel.Name                   = "AFKPanel"
+AFKPanel.Size                   = UDim2.new(0, 260, 0, 0)
+AFKPanel.Position               = UDim2.new(0, 14, 0, 100)
+AFKPanel.BackgroundColor3       = C_BG
+AFKPanel.BackgroundTransparency = 0.04
+AFKPanel.BorderSizePixel        = 0
+AFKPanel.AutomaticSize          = Enum.AutomaticSize.Y
+AFKPanel.Visible                = false
+AFKPanel.Parent                 = AFKGui
+makeRound(AFKPanel, 10)
+makeStroke(AFKPanel, C_STROKE, 1.2)
+
+local AFKPanelLayout = Instance.new("UIListLayout", AFKPanel)
+AFKPanelLayout.SortOrder = Enum.SortOrder.LayoutOrder
+AFKPanelLayout.Padding   = UDim.new(0, 0)
+
+local AFKAccentLine = Instance.new("Frame", AFKPanel)
+AFKAccentLine.Size             = UDim2.new(1, 0, 0, 3)
+AFKAccentLine.BackgroundColor3 = C_ACCENT
+AFKAccentLine.BorderSizePixel  = 0
+AFKAccentLine.LayoutOrder      = -1
+makeRound(AFKAccentLine, 3)
+
+local AFKTitleBar = Instance.new("Frame", AFKPanel)
+AFKTitleBar.Name             = "TitleBar"
+AFKTitleBar.Size             = UDim2.new(1, 0, 0, 42)
+AFKTitleBar.BackgroundColor3 = C_SURFACE
+AFKTitleBar.BorderSizePixel  = 0
+AFKTitleBar.LayoutOrder      = 0
+makeRound(AFKTitleBar, 10)
+
+local AFKTBFill = Instance.new("Frame", AFKTitleBar)
+AFKTBFill.Size             = UDim2.new(1, 0, 0.5, 0)
+AFKTBFill.Position         = UDim2.new(0, 0, 0.5, 0)
+AFKTBFill.BackgroundColor3 = C_SURFACE
+AFKTBFill.BorderSizePixel  = 0
+
+local AFKTBDivider = Instance.new("Frame", AFKTitleBar)
+AFKTBDivider.Size             = UDim2.new(1, 0, 0, 1)
+AFKTBDivider.Position         = UDim2.new(0, 0, 1, -1)
+AFKTBDivider.BackgroundColor3 = C_STROKE
+AFKTBDivider.BorderSizePixel  = 0
+
+local AFKIconBadge = Instance.new("Frame", AFKTitleBar)
+AFKIconBadge.Size             = UDim2.new(0, 26, 0, 26)
+AFKIconBadge.Position         = UDim2.new(0, 10, 0.5, -13)
+AFKIconBadge.BackgroundColor3 = C_ACCENT
+AFKIconBadge.BorderSizePixel  = 0
+makeRound(AFKIconBadge, 6)
+makeStroke(AFKIconBadge, Color3.fromRGB(80, 170, 255), 1)
+
+local AFKTitleIcon = Instance.new("TextLabel", AFKIconBadge)
+AFKTitleIcon.Size                 = UDim2.new(1, 0, 1, 0)
+AFKTitleIcon.BackgroundTransparency = 1
+AFKTitleIcon.Text                 = "🛡"
+AFKTitleIcon.TextSize             = 13
+AFKTitleIcon.Font                 = Enum.Font.GothamBold
+AFKTitleIcon.TextXAlignment       = Enum.TextXAlignment.Center
+
+local AFKTitleStack = Instance.new("Frame", AFKTitleBar)
+AFKTitleStack.Size                 = UDim2.new(1, -100, 1, 0)
+AFKTitleStack.Position             = UDim2.new(0, 44, 0, 0)
+AFKTitleStack.BackgroundTransparency = 1
+local AFKTitleStackLayout = Instance.new("UIListLayout", AFKTitleStack)
+AFKTitleStackLayout.SortOrder         = Enum.SortOrder.LayoutOrder
+AFKTitleStackLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+AFKTitleStackLayout.Padding           = UDim.new(0, 0)
+
+local AFKTitleLabel = Instance.new("TextLabel", AFKTitleStack)
+AFKTitleLabel.Size                 = UDim2.new(1, 0, 0, 18)
+AFKTitleLabel.BackgroundTransparency = 1
+AFKTitleLabel.Text                 = "Anti AFK"
+AFKTitleLabel.TextColor3           = C_TEXT
+AFKTitleLabel.TextSize             = 13
+AFKTitleLabel.Font                 = Enum.Font.GothamBold
+AFKTitleLabel.TextXAlignment       = Enum.TextXAlignment.Left
+AFKTitleLabel.LayoutOrder          = 0
+
+local AFKSubLabel = Instance.new("TextLabel", AFKTitleStack)
+AFKSubLabel.Size                 = UDim2.new(1, 0, 0, 13)
+AFKSubLabel.BackgroundTransparency = 1
+AFKSubLabel.Text                 = "Idle kick prevention"
+AFKSubLabel.TextColor3           = C_MUTED
+AFKSubLabel.TextSize             = 10
+AFKSubLabel.Font                 = Enum.Font.Gotham
+AFKSubLabel.TextXAlignment       = Enum.TextXAlignment.Left
+AFKSubLabel.LayoutOrder          = 1
+
+local AFKCloseBtn = Instance.new("TextButton", AFKTitleBar)
+AFKCloseBtn.Size             = UDim2.new(0, 22, 0, 22)
+AFKCloseBtn.Position         = UDim2.new(1, -30, 0.5, -11)
+AFKCloseBtn.BackgroundColor3 = C_CARD
+AFKCloseBtn.Text             = "✕"
+AFKCloseBtn.TextColor3       = C_MUTED
+AFKCloseBtn.TextSize         = 11
+AFKCloseBtn.Font             = Enum.Font.GothamBold
+AFKCloseBtn.BorderSizePixel  = 0
+makeRound(AFKCloseBtn, 5)
+makeStroke(AFKCloseBtn, C_STROKE, 1)
+
+AFKCloseBtn.MouseEnter:Connect(function()
+    TweenService:Create(AFKCloseBtn, TweenInfo.new(0.12), { BackgroundColor3 = C_RED, TextColor3 = C_TEXT }):Play()
+end)
+AFKCloseBtn.MouseLeave:Connect(function()
+    TweenService:Create(AFKCloseBtn, TweenInfo.new(0.12), { BackgroundColor3 = C_CARD, TextColor3 = C_MUTED }):Play()
+end)
+
+local AFKBody = Instance.new("Frame", AFKPanel)
+AFKBody.Size              = UDim2.new(1, 0, 0, 0)
+AFKBody.BackgroundTransparency = 1
+AFKBody.AutomaticSize     = Enum.AutomaticSize.Y
+AFKBody.LayoutOrder       = 1
+makePadding(AFKBody, 12, 14, 12, 12)
+
+local AFKBodyLayout = Instance.new("UIListLayout", AFKBody)
+AFKBodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
+AFKBodyLayout.Padding   = UDim.new(0, 8)
+
+local AFKToggleCard = Instance.new("Frame", AFKBody)
+AFKToggleCard.Name             = "ToggleCard"
+AFKToggleCard.Size             = UDim2.new(1, 0, 0, 56)
+AFKToggleCard.BackgroundColor3 = C_CARD
+AFKToggleCard.BorderSizePixel  = 0
+AFKToggleCard.LayoutOrder      = 0
+makeRound(AFKToggleCard, 10)
+makeStroke(AFKToggleCard, C_STROKE, 1)
+
+local AFKToggleLeft = Instance.new("Frame", AFKToggleCard)
+AFKToggleLeft.Size                 = UDim2.new(1, -70, 1, 0)
+AFKToggleLeft.Position             = UDim2.new(0, 14, 0, 0)
+AFKToggleLeft.BackgroundTransparency = 1
+local AFKToggleLeftLayout = Instance.new("UIListLayout", AFKToggleLeft)
+AFKToggleLeftLayout.SortOrder         = Enum.SortOrder.LayoutOrder
+AFKToggleLeftLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+AFKToggleLeftLayout.Padding           = UDim.new(0, 2)
+
+local AFKToggleLbl = Instance.new("TextLabel", AFKToggleLeft)
+AFKToggleLbl.Size                 = UDim2.new(1, 0, 0, 18)
+AFKToggleLbl.BackgroundTransparency = 1
+AFKToggleLbl.Text                 = "Enable Anti AFK"
+AFKToggleLbl.TextColor3           = C_TEXT
+AFKToggleLbl.TextSize             = 13
+AFKToggleLbl.Font                 = Enum.Font.GothamBold
+AFKToggleLbl.TextXAlignment       = Enum.TextXAlignment.Left
+AFKToggleLbl.LayoutOrder          = 0
+
+local AFKToggleHint = Instance.new("TextLabel", AFKToggleLeft)
+AFKToggleHint.Size                 = UDim2.new(1, 0, 0, 12)
+AFKToggleHint.BackgroundTransparency = 1
+AFKToggleHint.Text                 = "Prevents Roblox idle kick"
+AFKToggleHint.TextColor3           = C_MUTED
+AFKToggleHint.TextSize             = 10
+AFKToggleHint.Font                 = Enum.Font.Gotham
+AFKToggleHint.TextXAlignment       = Enum.TextXAlignment.Left
+AFKToggleHint.LayoutOrder          = 1
+
+local AFKPill = Instance.new("Frame", AFKToggleCard)
+AFKPill.Size             = UDim2.new(0, 46, 0, 26)
+AFKPill.Position         = UDim2.new(1, -58, 0.5, -13)
+AFKPill.BackgroundColor3 = C_STROKE
+AFKPill.BorderSizePixel  = 0
+makeRound(AFKPill, 13)
+
+local AFKPillThumb = Instance.new("Frame", AFKPill)
+AFKPillThumb.Size             = UDim2.new(0, 20, 0, 20)
+AFKPillThumb.Position         = UDim2.new(0, 3, 0.5, -10)
+AFKPillThumb.BackgroundColor3 = C_TEXT
+AFKPillThumb.BorderSizePixel  = 0
+makeRound(AFKPillThumb, 10)
+
+local AFKPillBtn = Instance.new("TextButton", AFKToggleCard)
+AFKPillBtn.Size                 = UDim2.new(1, 0, 1, 0)
+AFKPillBtn.BackgroundTransparency = 1
+AFKPillBtn.Text                 = ""
+
+local AFKStatusCard = Instance.new("Frame", AFKBody)
+AFKStatusCard.Name             = "StatusCard"
+AFKStatusCard.Size             = UDim2.new(1, 0, 0, 40)
+AFKStatusCard.BackgroundColor3 = C_CARD
+AFKStatusCard.BorderSizePixel  = 0
+AFKStatusCard.LayoutOrder      = 1
+makeRound(AFKStatusCard, 10)
+makeStroke(AFKStatusCard, C_STROKE, 1)
+
+local AFKStatusAccent = Instance.new("Frame", AFKStatusCard)
+AFKStatusAccent.Size             = UDim2.new(0, 3, 1, -12)
+AFKStatusAccent.Position         = UDim2.new(0, 0, 0, 6)
+AFKStatusAccent.BackgroundColor3 = C_MUTED
+AFKStatusAccent.BorderSizePixel  = 0
+makeRound(AFKStatusAccent, 2)
+
+local AFKDot = Instance.new("Frame", AFKStatusCard)
+AFKDot.Size             = UDim2.new(0, 8, 0, 8)
+AFKDot.Position         = UDim2.new(0, 14, 0.5, -4)
+AFKDot.BackgroundColor3 = C_MUTED
+AFKDot.BorderSizePixel  = 0
+makeRound(AFKDot, 4)
+
+local AFKStatusLabel = Instance.new("TextLabel", AFKStatusCard)
+AFKStatusLabel.Size                 = UDim2.new(1, -36, 1, 0)
+AFKStatusLabel.Position             = UDim2.new(0, 32, 0, 0)
+AFKStatusLabel.BackgroundTransparency = 1
+AFKStatusLabel.Text                 = "Idle — not running"
+AFKStatusLabel.TextColor3           = C_MUTED
+AFKStatusLabel.TextSize             = 11
+AFKStatusLabel.Font                 = Enum.Font.GothamMedium
+AFKStatusLabel.TextXAlignment       = Enum.TextXAlignment.Left
+
+local function makeAFKInfoRow(icon, title, desc, order)
+    local card = Instance.new("Frame", AFKBody)
+    card.Size              = UDim2.new(1, 0, 0, 44)
+    card.BackgroundColor3  = C_CARD
+    card.BorderSizePixel   = 0
+    card.LayoutOrder       = 2 + order
+    makeRound(card, 8)
+    makeStroke(card, C_STROKE, 1)
+    local iconBox = Instance.new("Frame", card)
+    iconBox.Size             = UDim2.new(0, 30, 0, 30)
+    iconBox.Position         = UDim2.new(0, 8, 0.5, -15)
+    iconBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    iconBox.BorderSizePixel  = 0
+    makeRound(iconBox, 7)
+    local iconLbl = Instance.new("TextLabel", iconBox)
+    iconLbl.Size                 = UDim2.new(1, 0, 1, 0)
+    iconLbl.BackgroundTransparency = 1
+    iconLbl.Text                 = icon
+    iconLbl.TextSize             = 14
+    iconLbl.Font                 = Enum.Font.GothamBold
+    iconLbl.TextXAlignment       = Enum.TextXAlignment.Center
+    local textStack = Instance.new("Frame", card)
+    textStack.Size                 = UDim2.new(1, -52, 1, 0)
+    textStack.Position             = UDim2.new(0, 46, 0, 0)
+    textStack.BackgroundTransparency = 1
+    local textLayout = Instance.new("UIListLayout", textStack)
+    textLayout.SortOrder         = Enum.SortOrder.LayoutOrder
+    textLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+    textLayout.Padding           = UDim.new(0, 2)
+    local titleLbl = Instance.new("TextLabel", textStack)
+    titleLbl.Size                 = UDim2.new(1, 0, 0, 15)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Text                 = title
+    titleLbl.TextColor3           = C_TEXT
+    titleLbl.TextSize             = 11
+    titleLbl.Font                 = Enum.Font.GothamMedium
+    titleLbl.TextXAlignment       = Enum.TextXAlignment.Left
+    titleLbl.LayoutOrder          = 0
+    local descLbl = Instance.new("TextLabel", textStack)
+    descLbl.Size                 = UDim2.new(1, 0, 0, 13)
+    descLbl.BackgroundTransparency = 1
+    descLbl.Text                 = desc
+    descLbl.TextColor3           = C_MUTED
+    descLbl.TextSize             = 10
+    descLbl.Font                 = Enum.Font.Gotham
+    descLbl.TextXAlignment       = Enum.TextXAlignment.Left
+    descLbl.LayoutOrder          = 1
+    return card
+end
+
+makeAFKInfoRow("🔒", "No External Scripts", "100% built-in — no loadstring needed", 0)
+makeAFKInfoRow("⚡", "VirtualUser Method", "Simulates input every 15 seconds", 1)
+makeAFKInfoRow("🔁", "Always Reversible", "Toggle off to fully disable at any time", 2)
+
+local AFKDivider = Instance.new("Frame", AFKBody)
+AFKDivider.Size                   = UDim2.new(1, 0, 0, 1)
+AFKDivider.BackgroundColor3       = C_STROKE
+AFKDivider.BackgroundTransparency = 0.4
+AFKDivider.BorderSizePixel        = 0
+AFKDivider.LayoutOrder            = 10
+
+local AFKFooter = Instance.new("TextLabel", AFKBody)
+AFKFooter.Size                 = UDim2.new(1, 0, 0, 14)
+AFKFooter.BackgroundTransparency = 1
+AFKFooter.Text                 = "by Zebra · Anti AFK v3 — Built-In"
+AFKFooter.TextColor3           = Color3.fromRGB(70, 70, 70)
+AFKFooter.TextSize             = 10
+AFKFooter.Font                 = Enum.Font.Gotham
+AFKFooter.TextXAlignment       = Enum.TextXAlignment.Center
+AFKFooter.LayoutOrder          = 11
+
+local AFKNotifFrame = Instance.new("Frame", AFKGui)
+AFKNotifFrame.Name                   = "AFKNotif"
+AFKNotifFrame.Size                   = UDim2.new(0, 280, 0, 68)
+AFKNotifFrame.Position               = UDim2.new(1, 10, 1, -86)
+AFKNotifFrame.BackgroundColor3       = C_SURFACE
+AFKNotifFrame.BackgroundTransparency = 0.05
+AFKNotifFrame.BorderSizePixel        = 0
+AFKNotifFrame.Visible                = false
+makeRound(AFKNotifFrame, 10)
+makeStroke(AFKNotifFrame, C_STROKE, 1)
+
+local AFKNotifBar = Instance.new("Frame", AFKNotifFrame)
+AFKNotifBar.Size             = UDim2.new(0, 3, 1, -14)
+AFKNotifBar.Position         = UDim2.new(0, 0, 0, 7)
+AFKNotifBar.BackgroundColor3 = C_ACCENT
+AFKNotifBar.BorderSizePixel  = 0
+makeRound(AFKNotifBar, 2)
+
+local AFKNotifIconBox = Instance.new("Frame", AFKNotifFrame)
+AFKNotifIconBox.Size             = UDim2.new(0, 30, 0, 30)
+AFKNotifIconBox.Position         = UDim2.new(0, 12, 0.5, -15)
+AFKNotifIconBox.BackgroundColor3 = C_CARD
+AFKNotifIconBox.BorderSizePixel  = 0
+makeRound(AFKNotifIconBox, 7)
+makeStroke(AFKNotifIconBox, C_STROKE, 1)
+
+local AFKNotifIcon = Instance.new("TextLabel", AFKNotifIconBox)
+AFKNotifIcon.Size                 = UDim2.new(1, 0, 1, 0)
+AFKNotifIcon.BackgroundTransparency = 1
+AFKNotifIcon.Text                 = "🛡"
+AFKNotifIcon.TextSize             = 14
+AFKNotifIcon.Font                 = Enum.Font.GothamBold
+AFKNotifIcon.TextXAlignment       = Enum.TextXAlignment.Center
+
+local AFKNotifTitle = Instance.new("TextLabel", AFKNotifFrame)
+AFKNotifTitle.Size                 = UDim2.new(1, -56, 0, 20)
+AFKNotifTitle.Position             = UDim2.new(0, 50, 0, 12)
+AFKNotifTitle.BackgroundTransparency = 1
+AFKNotifTitle.Text                 = "Anti AFK"
+AFKNotifTitle.TextColor3           = C_TEXT
+AFKNotifTitle.TextSize             = 13
+AFKNotifTitle.Font                 = Enum.Font.GothamBold
+AFKNotifTitle.TextXAlignment       = Enum.TextXAlignment.Left
+
+local AFKNotifBody = Instance.new("TextLabel", AFKNotifFrame)
+AFKNotifBody.Size                 = UDim2.new(1, -56, 0, 18)
+AFKNotifBody.Position             = UDim2.new(0, 50, 0, 34)
+AFKNotifBody.BackgroundTransparency = 1
+AFKNotifBody.Text                 = ""
+AFKNotifBody.TextColor3           = C_MUTED
+AFKNotifBody.TextSize             = 11
+AFKNotifBody.Font                 = Enum.Font.Gotham
+AFKNotifBody.TextXAlignment       = Enum.TextXAlignment.Left
+AFKNotifBody.TextTruncate         = Enum.TextTruncate.AtEnd
+
+local afkNotifActive = false
+local function showAFKNotif(title, body, color, duration)
+    if afkNotifActive then return end
+    afkNotifActive = true
+    AFKNotifTitle.Text    = title
+    AFKNotifBody.Text     = body
+    AFKNotifBar.BackgroundColor3 = color or C_ACCENT
+    AFKNotifFrame.Visible = true
+    AFKNotifFrame.Position = UDim2.new(1, 10, 1, -86)
+    local tweenIn = TweenService:Create(AFKNotifFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+        Position = UDim2.new(1, -294, 1, -86),
+    })
+    tweenIn:Play()
+    task.delay(duration or 3.5, function()
+        local tweenOut = TweenService:Create(AFKNotifFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
+            Position = UDim2.new(1, 10, 1, -86),
+        })
+        tweenOut:Play()
+        tweenOut.Completed:Wait()
+        AFKNotifFrame.Visible = false
+        afkNotifActive = false
+    end)
+end
+
+local function setAFKPill(on)
+    TweenService:Create(AFKPill, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {
+        BackgroundColor3 = on and C_ACCENT or C_STROKE,
+    }):Play()
+    TweenService:Create(AFKPillThumb, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {
+        Position = on and UDim2.new(1, -23, 0.5, -10) or UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = on and Color3.fromRGB(255, 255, 255) or C_TEXT,
+    }):Play()
+end
+
+local dotPulse = false
+task.spawn(function()
+    while true do
+        task.wait(1.4)
+        if dotPulse and AFKDot and AFKDot.Parent then
+            TweenService:Create(AFKDot, TweenInfo.new(0.5, Enum.EasingStyle.Sine), { BackgroundTransparency = 0.65 }):Play()
+            task.wait(0.5)
+            TweenService:Create(AFKDot, TweenInfo.new(0.5, Enum.EasingStyle.Sine), { BackgroundTransparency = 0 }):Play()
+        end
+    end
+end)
+
+local afkDragging, afkDragStart, afkStartPos = false, nil, nil
+AFKTitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        afkDragging = true
+        afkDragStart = input.Position
+        afkStartPos = AFKPanel.Position
+    end
+end)
+UIS.InputChanged:Connect(function(input)
+    if not afkDragging then return end
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        local d = input.Position - afkDragStart
+        AFKPanel.Position = UDim2.new(afkStartPos.X.Scale, afkStartPos.X.Offset + d.X, afkStartPos.Y.Scale, afkStartPos.Y.Offset + d.Y)
+        AFKShadow.Position = UDim2.new(afkStartPos.X.Scale, afkStartPos.X.Offset + d.X - 7, afkStartPos.Y.Scale, afkStartPos.Y.Offset + d.Y + 8)
+    end
+end)
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        afkDragging = false
+    end
+end)
+
+AFKCloseBtn.MouseButton1Click:Connect(function()
+    afkPanelOpen = false
+    TweenService:Create(AFKPanel, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
+        BackgroundTransparency = 1,
+    }):Play()
+    task.wait(0.18)
+    AFKPanel.Visible  = false
+    AFKShadow.Visible = false
+    AFKPanel.BackgroundTransparency = 0.04
+end)
+
+local function openAFKPanel()
+    afkPanelOpen = true
+    AFKPanel.BackgroundTransparency = 1
+    AFKPanel.Visible  = true
+    AFKShadow.Visible = true
+    TweenService:Create(AFKPanel, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+        BackgroundTransparency = 0.04,
+    }):Play()
+end
+
+AFKPillBtn.MouseButton1Click:Connect(function()
+    afkEnabled = not afkEnabled
+    AntiAFK.Enabled = afkEnabled
+    setAFKPill(afkEnabled)
+    if afkEnabled then
+        startAFK()
+        dotPulse = true
+        AFKDot.BackgroundColor3          = C_GREEN
+        AFKStatusAccent.BackgroundColor3 = C_GREEN
+        AFKStatusLabel.Text              = "Active — idle kick prevented"
+        AFKStatusLabel.TextColor3        = C_GREEN
+        AFKToggleCard.BackgroundColor3   = Color3.fromRGB(24, 40, 30)
+        TweenService:Create(AFKAccentLine, TweenInfo.new(0.3), { BackgroundColor3 = C_GREEN }):Play()
+        showAFKNotif("Anti AFK ON", "Built-in — running every 15s", C_GREEN, 4)
+    else
+        stopAFK()
+        dotPulse = false
+        AFKDot.BackgroundColor3          = C_MUTED
+        AFKStatusAccent.BackgroundColor3 = C_MUTED
+        AFKStatusLabel.Text              = "Idle — not running"
+        AFKStatusLabel.TextColor3        = C_MUTED
+        AFKToggleCard.BackgroundColor3   = C_CARD
+        TweenService:Create(AFKAccentLine, TweenInfo.new(0.3), { BackgroundColor3 = C_ACCENT }):Play()
+        showAFKNotif("Anti AFK OFF", "Toggled off — idle kick re-enabled", C_MUTED, 3)
+    end
+    if updateOverlay then updateOverlay() end
+end)
+
+-- =============================================
+--// KEYBIND OVERLAY \\--
+-- =============================================
+
+local RF_BG      = Color3.fromRGB(25,  25,  25)
+local RF_TOPBAR  = Color3.fromRGB(34,  34,  34)
+local RF_ELEM_BG = Color3.fromRGB(35,  35,  35)
+local RF_STROKE  = Color3.fromRGB(50,  50,  50)
+local RF_TEXT    = Color3.fromRGB(240, 240, 240)
+local RF_ACCENT  = Color3.fromRGB(50,  138, 220)
+local RF_DIM     = Color3.fromRGB(178, 178, 178)
+
+local OverlayGui = Instance.new("ScreenGui")
+OverlayGui.Name           = "KeybindOverlay"
+OverlayGui.ResetOnSpawn   = false
+OverlayGui.DisplayOrder   = 999
+OverlayGui.IgnoreGuiInset = true
+OverlayGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+OverlayGui.Parent         = playerGui
+
+local OverlayFrame = Instance.new("Frame")
+OverlayFrame.Name                   = "OverlayFrame"
+OverlayFrame.Size                   = UDim2.new(0, 225, 0, 0)
+OverlayFrame.Position               = UDim2.new(1, -235, 1, -320)
+OverlayFrame.BackgroundColor3       = RF_BG
+OverlayFrame.BackgroundTransparency = 0.08
+OverlayFrame.BorderSizePixel        = 0
+OverlayFrame.AutomaticSize          = Enum.AutomaticSize.Y
+OverlayFrame.Visible                = false
+OverlayFrame.Parent                 = OverlayGui
+
+Instance.new("UICorner", OverlayFrame).CornerRadius = UDim.new(0, 8)
+local OverlayStroke = Instance.new("UIStroke", OverlayFrame)
+OverlayStroke.Color = RF_STROKE; OverlayStroke.Thickness = 1.2
+Instance.new("UIListLayout", OverlayFrame).SortOrder = Enum.SortOrder.LayoutOrder
+local OverlayPad = Instance.new("UIPadding", OverlayFrame)
+OverlayPad.PaddingBottom = UDim.new(0, 8)
+
+local TitleBar = Instance.new("Frame", OverlayFrame)
+TitleBar.Size = UDim2.new(1,0,0,32); TitleBar.BackgroundColor3 = RF_TOPBAR
+TitleBar.BorderSizePixel = 0; TitleBar.LayoutOrder = 0
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 8)
+local TitleFill = Instance.new("Frame", TitleBar)
+TitleFill.Size = UDim2.new(1,0,0.5,0); TitleFill.Position = UDim2.new(0,0,0.5,0)
+TitleFill.BackgroundColor3 = RF_TOPBAR; TitleFill.BorderSizePixel = 0
+local TitleDivider = Instance.new("Frame", TitleBar)
+TitleDivider.Size = UDim2.new(1,0,0,1); TitleDivider.Position = UDim2.new(0,0,1,-1)
+TitleDivider.BackgroundColor3 = RF_STROKE; TitleDivider.BorderSizePixel = 0
+local TitleLabel = Instance.new("TextLabel", TitleBar)
+TitleLabel.Size = UDim2.new(1,-36,1,0); TitleLabel.Position = UDim2.new(0,12,0,0)
+TitleLabel.BackgroundTransparency = 1; TitleLabel.Text = "Keybinds"
+TitleLabel.TextColor3 = RF_TEXT; TitleLabel.TextSize = 12
+TitleLabel.Font = Enum.Font.GothamBold; TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+local CollapseBtn = Instance.new("TextButton", TitleBar)
+CollapseBtn.Size = UDim2.new(0,22,0,22); CollapseBtn.Position = UDim2.new(1,-27,0.5,-11)
+CollapseBtn.BackgroundColor3 = RF_ELEM_BG; CollapseBtn.Text = "–"
+CollapseBtn.TextColor3 = RF_DIM; CollapseBtn.TextSize = 12
+CollapseBtn.Font = Enum.Font.GothamBold; CollapseBtn.BorderSizePixel = 0
+Instance.new("UICorner", CollapseBtn).CornerRadius = UDim.new(0, 5)
+local CollapseBtnStroke = Instance.new("UIStroke", CollapseBtn)
+CollapseBtnStroke.Color = RF_STROKE; CollapseBtnStroke.Thickness = 1
+
+local BodyFrame = Instance.new("Frame", OverlayFrame)
+BodyFrame.Size = UDim2.new(1,0,0,0); BodyFrame.BackgroundTransparency = 1
+BodyFrame.AutomaticSize = Enum.AutomaticSize.Y; BodyFrame.LayoutOrder = 1
+local BodyLayout = Instance.new("UIListLayout", BodyFrame)
+BodyLayout.SortOrder = Enum.SortOrder.LayoutOrder; BodyLayout.Padding = UDim.new(0,3)
+local BodyPad = Instance.new("UIPadding", BodyFrame)
+BodyPad.PaddingTop = UDim.new(0,8); BodyPad.PaddingLeft = UDim.new(0,10)
+BodyPad.PaddingRight = UDim.new(0,10); BodyPad.PaddingBottom = UDim.new(0,2)
+
+local function makeRow(layoutOrder)
+    local row = Instance.new("Frame", BodyFrame)
+    row.Size = UDim2.new(1,0,0,22); row.BackgroundColor3 = RF_ELEM_BG
+    row.BorderSizePixel = 0; row.LayoutOrder = layoutOrder
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0,6)
+    local s = Instance.new("UIStroke", row); s.Color = RF_STROKE; s.Thickness = 1
+    local keyLbl = Instance.new("TextLabel", row)
+    keyLbl.Size = UDim2.new(1,-30,1,0); keyLbl.Position = UDim2.new(0,8,0,0)
+    keyLbl.BackgroundTransparency = 1; keyLbl.TextColor3 = RF_TEXT
+    keyLbl.TextSize = 11; keyLbl.Font = Enum.Font.GothamMedium
+    keyLbl.TextXAlignment = Enum.TextXAlignment.Left; keyLbl.Text = ""
+    local statusLbl = Instance.new("TextLabel", row)
+    statusLbl.Size = UDim2.new(0,22,1,0); statusLbl.Position = UDim2.new(1,-24,0,0)
+    statusLbl.BackgroundTransparency = 1; statusLbl.TextColor3 = RF_DIM
+    statusLbl.TextSize = 12; statusLbl.Font = Enum.Font.GothamBold
+    statusLbl.TextXAlignment = Enum.TextXAlignment.Right; statusLbl.Text = "❌"
+    return { row = row, keyLbl = keyLbl, statusLbl = statusLbl }
+end
+
+local RowDexFarm    = makeRow(0)
+local RowClash      = makeRow(1)
+local RowCam        = makeRow(2)
+local RowAFK        = makeRow(3)
+local RowRejoin     = makeRow(4)
+local RowReconnect  = makeRow(5)
+local RowFly        = makeRow(6)
+local RowNoclip     = makeRow(7)
+
+local TimerRow = Instance.new("Frame", BodyFrame)
+TimerRow.Size = UDim2.new(1,0,0,22); TimerRow.BackgroundColor3 = RF_ELEM_BG
+TimerRow.BorderSizePixel = 0; TimerRow.LayoutOrder = 8
+Instance.new("UICorner", TimerRow).CornerRadius = UDim.new(0,6)
+local timerStroke = Instance.new("UIStroke", TimerRow)
+timerStroke.Color = RF_STROKE; timerStroke.Thickness = 1
+local TimerLabel = Instance.new("TextLabel", TimerRow)
+TimerLabel.Size = UDim2.new(1,-8,1,0); TimerLabel.Position = UDim2.new(0,8,0,0)
+TimerLabel.BackgroundTransparency = 1; TimerLabel.TextColor3 = RF_DIM
+TimerLabel.TextSize = 11; TimerLabel.Font = Enum.Font.GothamMedium
+TimerLabel.TextXAlignment = Enum.TextXAlignment.Left
+TimerLabel.Text = "⏱ Session: 0m 00s"
+
+local OverlayDivider = Instance.new("Frame", BodyFrame)
+OverlayDivider.Size = UDim2.new(1,0,0,1); OverlayDivider.BackgroundColor3 = RF_STROKE
+OverlayDivider.BackgroundTransparency = 0.4; OverlayDivider.BorderSizePixel = 0
+OverlayDivider.LayoutOrder = 9
+local ByLabel = Instance.new("TextLabel", BodyFrame)
+ByLabel.Size = UDim2.new(1,0,0,15); ByLabel.BackgroundTransparency = 1
+ByLabel.Text = "by Zebra"; ByLabel.TextColor3 = RF_DIM
+ByLabel.TextSize = 10; ByLabel.Font = Enum.Font.Gotham
+ByLabel.TextXAlignment = Enum.TextXAlignment.Center; ByLabel.LayoutOrder = 10
+
+local function setRow(row, label, isOn)
+    row.keyLbl.Text      = label
+    row.statusLbl.Text   = isOn and "✅" or "❌"
+    row.statusLbl.TextColor3 = isOn and RF_ACCENT or Color3.fromRGB(120,120,120)
+    row.row.BackgroundColor3 = isOn and Color3.fromRGB(38,42,50) or RF_ELEM_BG
+end
+
+local flyEnabled = false
+
+local function updateOverlay()
+    local clashKey = ClashSettings.ClashKeybind and ClashSettings.ClashKeybind.Name or "F"
+    local camKey   = CameraSettings.LockOnKeybind and CameraSettings.LockOnKeybind.Name or "T"
+    setRow(RowDexFarm,   "Dex Farm",                   dexFarmOpen)
+    setRow(RowClash,     "[" .. clashKey .. "] Clash",  ClashSettings.AutoClash)
+    setRow(RowCam,       "[" .. camKey   .. "] Cam",    CameraSettings.BrokenCamera)
+    setRow(RowAFK,       "Anti AFK",                    AntiAFK.Enabled)
+    setRow(RowRejoin,    "Auto Rejoin",                 AutoRejoin.Enabled)
+    setRow(RowReconnect, "Auto Reconnect",              AutoReconnect.Enabled)
+    setRow(RowFly,       "Fly",                         flyEnabled)
+    setRow(RowNoclip,    "Noclip",                      NoclipSettings.Enabled)
+end
+
+RunService.Heartbeat:Connect(function()
+    TimerLabel.Text = "⏱ Session: " .. getSessionTime()
+end)
+
+local dragging, dragStart, startPos = false, nil, nil
+TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true; dragStart = input.Position; startPos = OverlayFrame.Position
+    end
+end)
+UIS.InputChanged:Connect(function(input)
+    if not dragging then return end
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch then
+        local d = input.Position - dragStart
+        OverlayFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+    end
+end)
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+end)
+
+local overlayExpanded = true
+CollapseBtn.MouseButton1Click:Connect(function()
+    overlayExpanded        = not overlayExpanded
+    BodyFrame.Visible      = overlayExpanded
+    OverlayDivider.Visible = overlayExpanded
+    ByLabel.Visible        = overlayExpanded
+    CollapseBtn.Text       = overlayExpanded and "–" or "+"
+    CollapseBtn.TextColor3 = overlayExpanded and RF_DIM or RF_TEXT
+end)
+
+-- =============================================
+--// AUTO CLASH FUNCTIONS \\--
+-- =============================================
+
+local function getZN()
+    for _, gui in ipairs(playerGui:GetChildren()) do
+        local zn = gui:FindFirstChild("ZN", true)
+        if zn then return zn end
+    end
+    return nil
+end
+
+local function getButtonValue(btn)
+    if not btn then return nil end
+    local MC = btn:FindFirstChild("MC"); if not MC then return nil end
+    local MXVal = MC:FindFirstChild("MX"); if not MXVal then return nil end
+    return MXVal.Value
+end
+
+local function isButtonDone(btn)
+    local val = getButtonValue(btn)
+    return val == nil or val <= 0
+end
+
+local function allButtonsDone(ZN)
+    for i = 1, 4 do
+        local btn = ZN:FindFirstChild("B" .. i)
+        if btn and not isButtonDone(btn) then return false end
+    end
+    return true
+end
+
+local function getButtonCenter(mc)
+    return Vector2.new(mc.AbsolutePosition.X + mc.AbsoluteSize.X/2, mc.AbsolutePosition.Y + mc.AbsoluteSize.Y/2)
+end
+
+local function clashButton(btn)
+    if not btn or isButtonDone(btn) then return end
+    local MC = btn:FindFirstChild("MC"); if not MC then return end
+    local MXVal = MC:FindFirstChild("MX"); if not MXVal or MXVal.Value <= 0 then return end
+    local center = getButtonCenter(MC)
+    pcall(function() VIM:SendMouseMoveEvent(center.X, center.Y, game) end); task.wait()
+    pcall(function() VIM:SendMouseButtonEvent(center.X, center.Y, 0, true,  game, 1) end); task.wait()
+    pcall(function() VIM:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1) end); task.wait()
+end
+
+local function focusButton(btn)
+    if not btn or not ClashSettings.HighlightOnSelect then return end
+    local MC = btn:FindFirstChild("MC")
+    if MC then pcall(function() GuiService.SelectedObject = MC end) end
+end
+
+local function exitUINavigation()
+    pcall(function() GuiService.SelectedObject = nil end); task.wait(0.1)
+    for _ = 1, 2 do
+        pcall(function() VIM:SendKeyEvent(true,  Enum.KeyCode.BackSlash, false, game) end); task.wait(0.05)
+        pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.BackSlash, false, game) end); task.wait(0.05)
+    end
+    pcall(function() GuiService.SelectedObject = nil end)
+end
+
+local autoClashThread = nil
+local alreadyExited   = false
+
+local function startAutoClash()
+    if autoClashThread then return end
+    alreadyExited = false
+    autoClashThread = task.spawn(function()
+        while ClashSettings.AutoClash do
+            local ZN = getZN()
+            if ZN then
+                if allButtonsDone(ZN) then
+                    if not alreadyExited then
+                        alreadyExited = true; task.wait(0.3)
+                        exitUINavigation()
+                        Rayfield:Notify({ Title = "Clash Complete ✅", Content = "All green. Pressed \\ to exit.", Duration = 3, Image = 4483362458 })
+                    end
+                    task.wait(0.1)
+                else
+                    alreadyExited = false
+                    for i = 1, 4 do
+                        if not ClashSettings.AutoClash then break end
+                        local btn = ZN:FindFirstChild("B" .. i)
+                        if btn and not isButtonDone(btn) then focusButton(btn); clashButton(btn) end
+                    end
+                end
+            else
+                task.wait(0.1)
+            end
+        end
+        autoClashThread = nil
+    end)
+end
+
+local function stopAutoClash()
+    ClashSettings.AutoClash = false; autoClashThread = nil
+end
+
+local function toggleAutoClash()
+    ClashSettings.AutoClash = not ClashSettings.AutoClash
+    if ClashSettings.AutoClash then
+        startAutoClash()
+        Rayfield:Notify({ Title = "Auto Clash ON ✅", Content = "Clicking buttons until green.", Duration = 2, Image = 4483362458 })
+    else
+        stopAutoClash()
+        Rayfield:Notify({ Title = "Auto Clash OFF ❌", Content = "Disabled via keybind.", Duration = 2, Image = 4483362458 })
+    end
+    updateOverlay()
+end
+
+local toggleBrokenCamera
+
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == ClashSettings.ClashKeybind then toggleAutoClash() end
+end)
+
+-- =============================================
+--// BROKEN CAMERA FUNCTIONS \\--
+-- =============================================
+
+local function freezeCamera()
+    if CameraSettings.CurrentlyFrozen then return end
+    CameraSettings.CurrentlyFrozen = true
+    CameraSettings.FrozenCFrame    = Camera.CFrame
+    Camera.CameraType = Enum.CameraType.Scriptable
+    CameraSettings.RenderConnection = RunService.RenderStepped:Connect(function()
+        if CameraSettings.CurrentlyFrozen and CameraSettings.FrozenCFrame then
+            Camera.CameraType = Enum.CameraType.Scriptable
+            Camera.CFrame     = CameraSettings.FrozenCFrame
+        end
+    end)
+end
+
+local function unfreezeCamera()
+    if not CameraSettings.CurrentlyFrozen then return end
+    CameraSettings.CurrentlyFrozen = false
+    CameraSettings.FrozenCFrame    = nil
+    if CameraSettings.RenderConnection then
+        CameraSettings.RenderConnection:Disconnect(); CameraSettings.RenderConnection = nil
+    end
+    Camera.CameraType = Enum.CameraType.Custom
+end
+
+local function isLockedOn()
+    local subject = Camera.CameraSubject; if not subject then return false end
+    local char = Player.Character; if not char then return false end
+    return not (subject:IsDescendantOf(char) or subject == char)
+end
+
+local function startLockOnWatcher()
+    if CameraSettings.SubjectConnection then return end
+    CameraSettings.SubjectConnection = Camera:GetPropertyChangedSignal("CameraSubject"):Connect(function()
+        if not CameraSettings.BrokenCamera then return end
+        if isLockedOn() then
+            freezeCamera()
+            Rayfield:Notify({ Title = "Locked On 🎯 — Camera Frozen", Content = "Camera held. Unlock to restore.", Duration = 2, Image = 4483362458 })
+        else
+            unfreezeCamera()
+            Rayfield:Notify({ Title = "Lock Off — Camera Restored 📷", Content = "Camera back to normal.", Duration = 2, Image = 4483362458 })
+        end
+    end)
+end
+
+local function stopLockOnWatcher()
+    if CameraSettings.SubjectConnection then
+        CameraSettings.SubjectConnection:Disconnect(); CameraSettings.SubjectConnection = nil
+    end
+    unfreezeCamera()
+end
+
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if not CameraSettings.BrokenCamera then return end
+    if input.KeyCode == CameraSettings.LockOnKeybind then
+        if CameraSettings.CurrentlyFrozen then unfreezeCamera() else freezeCamera() end
+    end
+end)
+
+local function snapBrokenCamera()
+    if CameraSettings.CurrentlyFrozen then
+        CameraSettings.FrozenCFrame = Camera.CFrame
+        Rayfield:Notify({ Title = "Camera Snapped 📸", Content = "Freeze point updated.", Duration = 2, Image = 4483362458 })
+    else
+        Rayfield:Notify({ Title = "Not Frozen", Content = "Lock on to an opponent first.", Duration = 2, Image = 4483362458 })
+    end
+end
+
+-- =============================================
+--// AUTO REJOIN \\--
+-- =============================================
+
+local function doRejoin()
+    local placeId = game.PlaceId
+    pcall(function()
+        local opts = Instance.new("TeleportOptions")
+        if AutoRejoin.LoadScript and SCRIPT_URL ~= "" then
+            opts:SetTeleportData({ autoLoad = true, scriptUrl = SCRIPT_URL })
+        end
+        if AutoRejoin.Method == "NewServer" then opts.ShouldReserveServer = true end
+        TeleportService:TeleportAsync(placeId, { Player }, opts)
+    end)
+end
+
+task.spawn(function()
+    pcall(function()
+        local joinData = Player:GetJoinData()
+        local td = joinData and joinData.TeleportData
+        if td and td.autoLoad and td.scriptUrl and td.scriptUrl ~= "" then
+            task.wait(3)
+            Rayfield:Notify({ Title = "Auto Rejoin — Reloading Script 🔄", Content = "Reloading script after rejoin...", Duration = 4, Image = 4483362458 })
+            task.wait(1)
+            pcall(function() loadstring(game:HttpGetAsync(td.scriptUrl))() end)
+        end
+    end)
+end)
+
+local function startAutoRejoin()
+    if AutoRejoin.Connection then return end
+    AutoRejoin.Connection = Player.OnTeleport:Connect(function(teleportState)
+        if teleportState == Enum.TeleportState.Failed and AutoRejoin.Enabled then
+            task.wait(AutoRejoin.Delay); doRejoin()
+        end
+    end)
+    Player.AncestryChanged:Connect(function(_, parent)
+        if parent == nil and AutoRejoin.Enabled then task.delay(AutoRejoin.Delay, doRejoin) end
+    end)
+end
+
+local function stopAutoRejoin()
+    AutoRejoin.Enabled = false
+    if AutoRejoin.Connection then AutoRejoin.Connection:Disconnect(); AutoRejoin.Connection = nil end
+end
+
+-- =============================================
+--// AUTO RECONNECT \\--
+-- =============================================
+
+local reconnectFired = false
+
+local function doReconnect(reason)
+    if not AutoReconnect.Enabled then return end
+    if reconnectFired then return end
+    reconnectFired = true
+    warn("[AutoReconnect] Triggered: " .. tostring(reason))
+    pcall(function()
+        Rayfield:Notify({
+            Title   = "Auto Reconnect 🔄",
+            Content = "Detected: " .. tostring(reason) .. ". Rejoining in " .. AutoReconnect.Delay .. "s...",
+            Duration = AutoReconnect.Delay + 1,
+            Image   = 4483362458,
+        })
+    end)
+    task.wait(AutoReconnect.Delay)
+    local placeId = game.PlaceId
+    pcall(function()
+        local opts = Instance.new("TeleportOptions")
+        if AutoRejoin.LoadScript and SCRIPT_URL ~= "" then
+            opts:SetTeleportData({ autoLoad = true, scriptUrl = SCRIPT_URL })
+        end
+        TeleportService:TeleportAsync(placeId, { Player }, opts)
+    end)
+end
+
+local function startAutoReconnect()
+    if not AutoReconnect.CoreGuiConnection then
+        AutoReconnect.CoreGuiConnection = CoreGui.ChildAdded:Connect(function(child)
+            if not AutoReconnect.Enabled then return end
+            local n = child.Name:lower()
+            if n:find("disconnect") or n:find("error") or n:find("connectionfailed") or n == "errorprompt" then
+                task.spawn(doReconnect, "Error screen: " .. child.Name)
+            end
+        end)
+    end
+    if not AutoReconnect.NetworkConnection then
+        AutoReconnect.NetworkConnection = Players.PlayerRemoving:Connect(function(p)
+            if p == Player and AutoReconnect.Enabled then
+                task.spawn(doReconnect, "PlayerRemoving fired")
+            end
+        end)
+    end
+    if not AutoReconnect.KickConnection then
+        AutoReconnect.KickConnection = Player.AncestryChanged:Connect(function(_, parent)
+            if parent == nil and AutoReconnect.Enabled then
+                task.spawn(doReconnect, "Kicked / disconnected")
+            end
+        end)
+    end
+    local lastBeat = os.clock()
+    local beatConn = RunService.Heartbeat:Connect(function() lastBeat = os.clock() end)
+    task.spawn(function()
+        while AutoReconnect.Enabled do
+            task.wait(5)
+            if AutoReconnect.Enabled and (os.clock() - lastBeat) > 8 then
+                beatConn:Disconnect()
+                task.spawn(doReconnect, "Heartbeat timeout (network freeze)")
+                break
+            end
+        end
+        beatConn:Disconnect()
+    end)
+end
+
+local function stopAutoReconnect()
+    AutoReconnect.Enabled = false
+    if AutoReconnect.CoreGuiConnection then AutoReconnect.CoreGuiConnection:Disconnect(); AutoReconnect.CoreGuiConnection = nil end
+    if AutoReconnect.NetworkConnection  then AutoReconnect.NetworkConnection:Disconnect();  AutoReconnect.NetworkConnection  = nil end
+    if AutoReconnect.KickConnection     then AutoReconnect.KickConnection:Disconnect();     AutoReconnect.KickConnection     = nil end
+end
+
+-- =============================================
+--// FPS BOOST \\--
+-- =============================================
+
+local FpsSnapshot = { Applied = false, DescConnection = nil, Parts = {}, Meshes = {}, Decals = {}, Effects = {}, Lighting = {}, Terrain = {} }
+
+local function takeSnapshot()
+    FpsSnapshot.Parts = {}; FpsSnapshot.Meshes = {}; FpsSnapshot.Decals = {}; FpsSnapshot.Effects = {}
+    for _, v in next, Workspace:GetDescendants() do
+        pcall(function()
+            if v:IsA("BasePart") and not v:IsA("MeshPart") then
+                table.insert(FpsSnapshot.Parts, { inst=v, CastShadow=v.CastShadow, Material=v.Material, Reflectance=v.Reflectance, MaterialVariant=v.MaterialVariant })
+            elseif v:IsA("MeshPart") then
+                table.insert(FpsSnapshot.Meshes, { inst=v, CastShadow=v.CastShadow, DoubleSided=v.DoubleSided, RenderFidelity=v.RenderFidelity, TextureID=v.TextureID })
+            elseif v:IsA("Decal") or v:IsA("Texture") then
+                table.insert(FpsSnapshot.Decals, { inst=v, Transparency=v.Transparency })
+            elseif v:IsA("Fire") or v:IsA("SpotLight") or v:IsA("Smoke") or v:IsA("Sparkles") or v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") then
+                table.insert(FpsSnapshot.Effects, { inst=v, Enabled=v.Enabled })
+            end
+        end)
+    end
+    local L = game:GetService("Lighting")
+    FpsSnapshot.Lighting = { GlobalShadows=L.GlobalShadows, FogEnd=L.FogEnd, Brightness=L.Brightness }
+    local T = Workspace:FindFirstChildOfClass("Terrain")
+    if T then FpsSnapshot.Terrain = { WaterReflectance=T.WaterReflectance, WaterTransparency=T.WaterTransparency, WaterWaveSize=T.WaterWaveSize, WaterWaveSpeed=T.WaterWaveSpeed } end
+end
+
+local function stripDescendant(v)
+    pcall(function()
+        if v:IsA("Model") then v.LevelOfDetail="Disabled"; v.ModelStreamingMode="Nonatomic"
+        elseif v:IsA("BasePart") and not v:IsA("MeshPart") then v.CastShadow=false; v.Material="Plastic"; v.Reflectance=0; v.MaterialVariant=""
+        elseif v:IsA("Decal") or v:IsA("Texture") then v.Transparency=1
+        elseif v:IsA("MeshPart") then v.CastShadow=false; v.DoubleSided=false; v.RenderFidelity="Performance"; v.TextureID=10385902758728957
+        elseif v:IsA("SpecialMesh") then v.TextureId=0
+        elseif v:IsA("ShirtGraphic") then v.Graphic=0
+        elseif v:IsA("Shirt") or v:IsA("Pants") then v[v.ClassName.."Template"]=0
+        elseif v:IsA("Fire") or v:IsA("SpotLight") or v:IsA("Smoke") or v:IsA("Sparkles") or v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") then v.Enabled=false
+        elseif v:IsA("Explosion") then v.BlastPressure=1; v.BlastRadius=1
+        elseif v:IsA("SurfaceAppearance") or v:IsA("Debris") or v:IsA("MaterialVariant") then v:Destroy()
+        elseif v:IsA("Attachment") then v.Visible=false end
+    end)
+end
+
+-- =============================================
+--// NOCLIP FUNCTIONS \\--
+-- =============================================
+
+local function setNoclip(state)
+    if state then
+        NoclipSettings.Connection = RunService.Stepped:Connect(function()
+            local char = Player.Character
+            if not char then return end
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end)
+    else
+        if NoclipSettings.Connection then
+            NoclipSettings.Connection:Disconnect()
+            NoclipSettings.Connection = nil
+        end
+        local char = Player.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then part.CanCollide = true end
+            end
+        end
+    end
+end
+
+-- =============================================
+--// RAYFIELD WINDOW \\--
+-- =============================================
+
+local Window = Rayfield:CreateWindow({
+    Name             = "Boxing League | By Zebra",
+    LoadingTitle     = "Boxing League",
+    LoadingSubtitle  = "By Zebra",
+    ConfigurationSaving = {
+        Enabled    = true,
+        FolderName = "ZebraBoxingLeague",
+        FileName   = "Config",
+    },
+    Discord  = { Enabled = false },
+    KeySystem = false,
+})
+
+local rayfieldVisible = true
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == RayfieldKeybindSettings.Key then
+        rayfieldVisible = not rayfieldVisible
+        if rayfieldVisible then Rayfield:ShowGui() else Rayfield:HideGui() end
+    end
+end)
+
+-- =============================================
+--// DEX TRAINING TAB \\--
+-- =============================================
+
+local DexTab = Window:CreateTab("🥊 Dex Training", 4483362458)
+DexTab:CreateSection("Dex Farm — Built-In GUI")
+DexTab:CreateParagraph({
+    Title   = "How To Use",
+    Content = "Click 'Open Dex Farm' to launch the custom draggable GUI.\n\nSelect your bag (BOX1 / BOX2 / BOX3) then press START GRIND. The selected bag will be highlighted in the world in orange-red so you can see which one is active. Use the Bag Highlight toggle inside the GUI to turn the glow on or off at any time. The farm reads the orange target number from the bag TV and auto-punches until the goal is reached.",
+})
+DexTab:CreateButton({
+    Name     = "Open Dex Farm 🥊",
+    Callback = function()
+        if dexFarmOpen and dexFarmGui and dexFarmGui.Enabled then
+            Rayfield:Notify({ Title = "Already Open 🥊", Content = "Dex Farm panel is already visible.", Duration = 2, Image = 4483362458 })
+            return
+        end
+        createDexFarmGui()
+        updateOverlay()
+        Rayfield:Notify({ Title = "Dex Farm Opened 🥊", Content = "Select a bag then press START GRIND.", Duration = 3, Image = 4483362458 })
+    end,
+})
+DexTab:CreateSection("Bag Highlights")
+DexTab:CreateLabel("✦ BOX1 — Highlighted in orange-red when selected.")
+DexTab:CreateLabel("✦ BOX2 — Highlighted in orange-red when selected.")
+DexTab:CreateLabel("✦ BOX3 — Highlighted in orange-red when selected.")
+DexTab:CreateLabel("✦ Use the Bag Highlight toggle inside the GUI to enable/disable.")
+DexTab:CreateLabel("✦ Highlight clears automatically when you close the GUI.")
+DexTab:CreateSection("Info")
+DexTab:CreateLabel("Reads the orange number from the bag TV automatically.")
+DexTab:CreateLabel("Uses heavy hits (×100) then light hits for the remainder.")
+DexTab:CreateLabel("Stops automatically when the goal is reached.")
+
+-- =============================================
+--// AUTO CLASH TAB \\--
+-- =============================================
+
+local ClashTab = Window:CreateTab("⚔️ Auto Clash", 4483362458)
+ClashTab:CreateSection("Automation")
+ClashTab:CreateToggle({
+    Name = "Auto Clash", CurrentValue = false, Flag = "AutoClash",
+    Callback = function(val)
+        ClashSettings.AutoClash = val
+        if val then startAutoClash() else stopAutoClash() end
+        updateOverlay()
+    end,
+})
+ClashTab:CreateSection("Manual Controls")
+ClashTab:CreateButton({ Name = "Clash All Buttons Once", Callback = function()
+    local ZN = getZN()
+    if not ZN then Rayfield:Notify({ Title = "Not In Clash", Content = "ZN frame not found.", Duration = 3, Image = 4483362458 }); return end
+    for i = 1, 4 do local btn = ZN:FindFirstChild("B"..i); if btn and not isButtonDone(btn) then task.spawn(clashButton, btn) end end
+end })
+for i = 1, 4 do
+    ClashTab:CreateButton({ Name = "Clash B"..i.." Once", Callback = function()
+        local ZN = getZN()
+        if not ZN then Rayfield:Notify({ Title = "Not In Clash", Content = "ZN frame not found.", Duration = 2, Image = 4483362458 }); return end
+        local btn = ZN:FindFirstChild("B"..i)
+        if btn and not isButtonDone(btn) then task.spawn(clashButton, btn)
+        else Rayfield:Notify({ Title = "B"..i.." Already Done", Content = "Already at 0.", Duration = 2, Image = 4483362458 }) end
+    end })
+end
+ClashTab:CreateSection("Settings")
+ClashTab:CreateToggle({ Name = "Highlight Button on Select", CurrentValue = true, Flag = "HighlightOnSelect", Callback = function(val) ClashSettings.HighlightOnSelect = val end })
+ClashTab:CreateButton({ Name = "Set Toggle Key (click then press a key)", Callback = function()
+    Rayfield:Notify({ Title = "Listening...", Content = "Press any key to set the keybind.", Duration = 4, Image = 4483362458 })
+    local conn
+    conn = UIS.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            local kc = input.KeyCode
+            if kc ~= Enum.KeyCode.LeftShift and kc ~= Enum.KeyCode.RightShift
+            and kc ~= Enum.KeyCode.LeftControl and kc ~= Enum.KeyCode.RightControl
+            and kc ~= Enum.KeyCode.LeftAlt and kc ~= Enum.KeyCode.RightAlt then
+                conn:Disconnect(); ClashSettings.ClashKeybind = kc
+                Rayfield:Notify({ Title = "Keybind Set ✅", Content = "Toggle is now ["..kc.Name.."]", Duration = 3, Image = 4483362458 })
+                updateOverlay()
+            end
+        end
+    end)
+end })
+ClashTab:CreateButton({ Name = "Check Clash Status", Callback = function()
+    local ZN = getZN()
+    if not ZN then Rayfield:Notify({ Title = "ZN Not Found", Content = "No active clash detected.", Duration = 3, Image = 4483362458 }); return end
+    local lines = {}
+    for i = 1, 4 do
+        local btn = ZN:FindFirstChild("B"..i)
+        if btn then
+            local val = getButtonValue(btn)
+            table.insert(lines, "B"..i..": "..(val == nil and "❓ unknown" or (val <= 0 and "✅ Green" or "⏳ "..tostring(val).." left")))
+        else table.insert(lines, "B"..i..": not found") end
+    end
+    Rayfield:Notify({ Title = "Button Status", Content = table.concat(lines, " | "), Duration = 5, Image = 4483362458 })
+end })
+ClashTab:CreateButton({ Name = "Exit UI Navigation Now", Callback = function()
+    exitUINavigation()
+    Rayfield:Notify({ Title = "Done", Content = "Pressed \\ to exit UI navigation.", Duration = 2, Image = 4483362458 })
+end })
+ClashTab:CreateSection("Info")
+ClashTab:CreateLabel("Press [F] to toggle Auto Clash. Change key above.")
+
+-- =============================================
+--// BROKEN CAMERA TAB \\--
+-- =============================================
+
+local CameraTab = Window:CreateTab("📷 Camera", 4483362458)
+CameraTab:CreateSection("⚠️ How It Works")
+CameraTab:CreateParagraph({ Title = "Broken Camera", Content = "When enabled, your camera automatically freezes the moment you lock on to an opponent. Unlocking restores it. Set your lock-on key below (default: T)." })
+CameraTab:CreateSection("Broken Camera")
+local BrokenCameraToggle = CameraTab:CreateToggle({
+    Name = "Broken Camera", CurrentValue = false, Flag = "BrokenCamera",
+    Callback = function(val)
+        CameraSettings.BrokenCamera = val
+        if val then
+            startLockOnWatcher()
+            if isLockedOn() then freezeCamera() end
+            Rayfield:Notify({ Title = "Broken Camera ON 📷", Content = "Will freeze on lock-on. Key: ["..CameraSettings.LockOnKeybind.Name.."]", Duration = 3, Image = 4483362458 })
+        else
+            stopLockOnWatcher()
+            Rayfield:Notify({ Title = "Broken Camera OFF 📷", Content = "Camera restored to normal.", Duration = 3, Image = 4483362458 })
+        end
+        updateOverlay()
+    end,
+})
+toggleBrokenCamera = function() BrokenCameraToggle:Set(not CameraSettings.BrokenCamera) end
+CameraTab:CreateButton({ Name = "Snap Freeze Point (re-lock current view)", Callback = snapBrokenCamera })
+CameraTab:CreateSection("Lock-On Key")
+CameraTab:CreateButton({ Name = "Set Lock-On Key (click then press your key)", Callback = function()
+    Rayfield:Notify({ Title = "Listening...", Content = "Press your in-game lock-on key.", Duration = 4, Image = 4483362458 })
+    local conn
+    conn = UIS.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            local kc = input.KeyCode
+            if kc ~= Enum.KeyCode.LeftShift and kc ~= Enum.KeyCode.RightShift
+            and kc ~= Enum.KeyCode.LeftControl and kc ~= Enum.KeyCode.RightControl
+            and kc ~= Enum.KeyCode.LeftAlt and kc ~= Enum.KeyCode.RightAlt then
+                conn:Disconnect(); CameraSettings.LockOnKeybind = kc
+                Rayfield:Notify({ Title = "Lock-On Key Set ✅", Content = "Freeze triggers on ["..kc.Name.."]", Duration = 3, Image = 4483362458 })
+                updateOverlay()
+            end
+        end
+    end)
+end })
+CameraTab:CreateSection("Info")
+CameraTab:CreateLabel("Default lock-on key: [T]. Camera auto-freezes on lock-on, restores on unlock.")
+
+-- =============================================
+--// ANTI AFK TAB \\--
+-- =============================================
+
+local AFKTab = Window:CreateTab("🛡️ Anti AFK", 4483362458)
+AFKTab:CreateSection("Built-In Anti AFK")
+AFKTab:CreateParagraph({
+    Title   = "No External Scripts",
+    Content = "This Anti AFK is fully built-in using VirtualUser — no external loadstring required.\n\nClick below to open the custom draggable panel, then toggle the pill inside to activate.",
+})
+AFKTab:CreateButton({
+    Name     = "Open Anti AFK Panel",
+    Callback = function()
+        if afkPanelOpen then
+            Rayfield:Notify({ Title = "Already Open 🛡", Content = "The Anti AFK panel is already visible.", Duration = 2, Image = 4483362458 })
+            return
+        end
+        openAFKPanel()
+        Rayfield:Notify({ Title = "Panel Opened 🛡", Content = "Toggle the pill switch to enable Anti AFK.", Duration = 3, Image = 4483362458 })
+    end,
+})
+AFKTab:CreateButton({
+    Name     = "Quick Toggle Anti AFK",
+    Callback = function()
+        afkEnabled = not afkEnabled
+        AntiAFK.Enabled = afkEnabled
+        setAFKPill(afkEnabled)
+        if afkEnabled then
+            startAFK()
+            dotPulse = true
+            AFKDot.BackgroundColor3          = C_GREEN
+            AFKStatusAccent.BackgroundColor3 = C_GREEN
+            AFKStatusLabel.Text              = "Active — idle kick prevented"
+            AFKStatusLabel.TextColor3        = C_GREEN
+            AFKToggleCard.BackgroundColor3   = Color3.fromRGB(24, 40, 30)
+            TweenService:Create(AFKAccentLine, TweenInfo.new(0.3), { BackgroundColor3 = C_GREEN }):Play()
+            Rayfield:Notify({ Title = "Anti AFK ON 🛡", Content = "Running — VirtualUser active every 15s.", Duration = 3, Image = 4483362458 })
+        else
+            stopAFK()
+            dotPulse = false
+            AFKDot.BackgroundColor3          = C_MUTED
+            AFKStatusAccent.BackgroundColor3 = C_MUTED
+            AFKStatusLabel.Text              = "Idle — not running"
+            AFKStatusLabel.TextColor3        = C_MUTED
+            AFKToggleCard.BackgroundColor3   = C_CARD
+            TweenService:Create(AFKAccentLine, TweenInfo.new(0.3), { BackgroundColor3 = C_ACCENT }):Play()
+            Rayfield:Notify({ Title = "Anti AFK OFF 🛡", Content = "Disabled.", Duration = 2, Image = 4483362458 })
+        end
+        updateOverlay()
+    end,
+})
+AFKTab:CreateSection("Panel Features")
+AFKTab:CreateLabel("✦ Draggable panel — move anywhere on screen.")
+AFKTab:CreateLabel("✦ Animated pill toggle with live status dot.")
+AFKTab:CreateLabel("✦ Slide-in notifications on enable/disable.")
+AFKTab:CreateLabel("✦ No external scripts — 100% built-in.")
+AFKTab:CreateSection("How It Works")
+AFKTab:CreateParagraph({
+    Title   = "VirtualUser Method",
+    Content = "Calls VirtualUser:CaptureController() and CaptureController() every 15 seconds. This is the safest method — it simulates input without any external dependencies.",
+})
+
+-- =============================================
+--// AUTO REJOIN TAB \\--
+-- =============================================
+
+local RejoinTab = Window:CreateTab("🔄 Auto Rejoin", 4483362458)
+RejoinTab:CreateSection("Kick Protection")
+RejoinTab:CreateParagraph({ Title = "Auto Rejoin", Content = "Automatically rejoins this game when kicked or disconnected. Choose how to rejoin and whether to reload this script on arrival." })
+RejoinTab:CreateToggle({
+    Name = "Enable Auto Rejoin", CurrentValue = false, Flag = "AutoRejoin",
+    Callback = function(val)
+        AutoRejoin.Enabled = val
+        if val then
+            startAutoRejoin()
+            Rayfield:Notify({ Title = "Auto Rejoin ON 🔄", Content = "Method: "..AutoRejoin.Method.." | Delay: "..AutoRejoin.Delay.."s", Duration = 3, Image = 4483362458 })
+        else
+            stopAutoRejoin()
+            Rayfield:Notify({ Title = "Auto Rejoin OFF", Content = "Kick protection disabled.", Duration = 3, Image = 4483362458 })
+        end
+        updateOverlay()
+    end,
+})
+RejoinTab:CreateSection("Rejoin Method")
+RejoinTab:CreateParagraph({ Title = "Methods Explained", Content = "SameServer — TeleportAsync rejoin.\nNewServer — forces a fresh reserved server." })
+RejoinTab:CreateDropdown({
+    Name = "Rejoin Method", Options = {"SameServer","NewServer"}, CurrentOption = "SameServer", Flag = "RejoinMethod",
+    Callback = function(option)
+        AutoRejoin.Method = option
+        Rayfield:Notify({ Title = "Rejoin Method Set ✅", Content = "Now using: "..option, Duration = 3, Image = 4483362458 })
+    end,
+})
+RejoinTab:CreateSection("Script Reload on Rejoin")
+RejoinTab:CreateToggle({
+    Name = "Load Script After Rejoin", CurrentValue = true, Flag = "RejoinLoadScript",
+    Callback = function(val)
+        AutoRejoin.LoadScript = val
+        Rayfield:Notify({
+            Title   = val and "Script Reload ON ✅" or "Script Reload OFF ❌",
+            Content = val and "Script will auto-execute after rejoin." or "Rejoins without reloading script.",
+            Duration = 3, Image = 4483362458,
+        })
+    end,
+})
+RejoinTab:CreateSection("Timing")
+RejoinTab:CreateSlider({ Name = "Rejoin Delay", Range = {1,15}, Increment = 1, Suffix = "s", CurrentValue = 5, Flag = "RejoinDelay", Callback = function(val) AutoRejoin.Delay = val end })
+RejoinTab:CreateSection("Manual")
+RejoinTab:CreateButton({ Name = "Rejoin Now", Callback = function()
+    Rayfield:Notify({ Title = "Rejoining... 🔄", Content = "Teleporting back.", Duration = 3, Image = 4483362458 })
+    task.wait(1); doRejoin()
+end })
+RejoinTab:CreateSection("Info")
+RejoinTab:CreateLabel("PlaceId: "..tostring(game.PlaceId))
+RejoinTab:CreateLabel("Edit SCRIPT_URL at top of file for auto-reload.")
+
+-- =============================================
+--// AUTO RECONNECT TAB \\--
+-- =============================================
+
+local ReconnectTab = Window:CreateTab("🔌 Auto Reconnect", 4483362458)
+ReconnectTab:CreateSection("Extended Disconnect Detection")
+ReconnectTab:CreateParagraph({
+    Title   = "Auto Reconnect",
+    Content = "Catches disconnect types the basic Auto Rejoin misses:\n• Roblox error/disconnect screen (CoreGui watcher)\n• PlayerRemoving event\n• Hard kicks via AncestryChanged\n• Network freeze watchdog (Heartbeat stops for 8s)\n\nAll triggers share the rejoin delay below.",
+})
+ReconnectTab:CreateToggle({
+    Name = "Enable Auto Reconnect", CurrentValue = false, Flag = "AutoReconnect",
+    Callback = function(val)
+        AutoReconnect.Enabled = val
+        if val then
+            reconnectFired = false
+            startAutoReconnect()
+            Rayfield:Notify({ Title = "Auto Reconnect ON 🔌", Content = "Monitoring all disconnect types. Delay: "..AutoReconnect.Delay.."s", Duration = 3, Image = 4483362458 })
+        else
+            stopAutoReconnect()
+            Rayfield:Notify({ Title = "Auto Reconnect OFF", Content = "Extended disconnect detection disabled.", Duration = 3, Image = 4483362458 })
+        end
+        updateOverlay()
+    end,
+})
+ReconnectTab:CreateSection("Timing")
+ReconnectTab:CreateSlider({ Name = "Reconnect Delay", Range = {1,15}, Increment = 1, Suffix = "s", CurrentValue = 4, Flag = "ReconnectDelay", Callback = function(val) AutoReconnect.Delay = val end })
+ReconnectTab:CreateSection("Info")
+ReconnectTab:CreateLabel("Use alongside Auto Rejoin for maximum disconnect coverage.")
+ReconnectTab:CreateLabel("Heartbeat watchdog fires if engine freezes for more than 8 seconds.")
+
+-- =============================================
+--// AUTO TRAIN TAB \\--
+-- =============================================
+
+local TrainTab = Window:CreateTab("🏋️ Auto Train", 4483362458)
+TrainTab:CreateSection("Auto Train")
+TrainTab:CreateParagraph({
+    Title   = "Auto Train",
+    Content = "Click the button below to load and activate the Auto Train script. Make sure your executor has HTTP permissions enabled.",
+})
+TrainTab:CreateButton({
+    Name     = "Launch Auto Train 🏋️",
+    Callback = function()
+        Rayfield:Notify({
+            Title   = "Loading Auto Train... 🏋️",
+            Content = "Please wait while the script loads.",
+            Duration = 3,
+            Image   = 4483362458,
+        })
+        local ok, err = pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/kellyjieyi37-hash/script/main/script.lua"))()
+        end)
+        if ok then
+            Rayfield:Notify({
+                Title   = "Auto Train Loaded ✅",
+                Content = "Script is now active.",
+                Duration = 4,
+                Image   = 4483362458,
+            })
+        else
+            Rayfield:Notify({
+                Title   = "Load Failed ❌",
+                Content = "Check HTTP permissions. Error: " .. tostring(err):sub(1, 60),
+                Duration = 5,
+                Image   = 4483362458,
+            })
+        end
+    end,
+})
+TrainTab:CreateSection("Need a Key?")
+TrainTab:CreateParagraph({
+    Title   = "Script Requires a Key?",
+    Content = "Some scripts require a key to run. If the Auto Train script asks for one, you can use bypass.tools to skip it — copy the link below and open it in your browser.",
+})
+TrainTab:CreateButton({
+    Name     = "Copy bypass.tools Link 🔑",
+    Callback = function()
+        setclipboard("https://bypass.tools/")
+        Rayfield:Notify({
+            Title   = "Link Copied! 🔑",
+            Content = "Paste https://bypass.tools/ in your browser to bypass the key.",
+            Duration = 4,
+            Image   = 4483362458,
+        })
+    end,
+})
+TrainTab:CreateSection("Info")
+TrainTab:CreateLabel("Click Launch once per session.")
+TrainTab:CreateLabel("Requires HTTP permissions to be enabled in your executor.")
+
+-- =============================================
+--// FLY TAB \\--
+-- =============================================
+
+local FlyTab = Window:CreateTab("🛸 Fly", 4483362458)
+FlyTab:CreateSection("Fly GUI V3")
+FlyTab:CreateParagraph({
+    Title   = "FlyGuiV3",
+    Content = "Loads the working FlyGuiV3 script by XNEOFF. Click Launch to activate. The fly GUI will appear with all controls built in — speed, toggle, etc.",
+})
+FlyTab:CreateButton({
+    Name     = "Launch Fly GUI",
+    Callback = function()
+        Rayfield:Notify({
+            Title   = "Loading Fly GUI... 🛸",
+            Content = "Please wait while FlyGuiV3 loads.",
+            Duration = 3,
+            Image   = 4483362458,
+        })
+        local ok, err = pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/XNEOFF/FlyGuiV3/main/FlyGuiV3.txt"))()
+        end)
+        if ok then
+            flyEnabled = true
+            updateOverlay()
+            Rayfield:Notify({ Title = "Fly GUI Loaded ✅", Content = "FlyGuiV3 is now active.", Duration = 4, Image = 4483362458 })
+        else
+            local ok2, err2 = pcall(function()
+                loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/XNEOFF/FlyGuiV3/main/FlyGuiV3.txt"))()
+            end)
+            if ok2 then
+                flyEnabled = true
+                updateOverlay()
+                Rayfield:Notify({ Title = "Fly GUI Loaded ✅", Content = "FlyGuiV3 active.", Duration = 4, Image = 4483362458 })
+            else
+                Rayfield:Notify({
+                    Title   = "Fly Load Failed ❌",
+                    Content = "Check executor HTTP permissions. Error: " .. tostring(err):sub(1, 55),
+                    Duration = 5,
+                    Image   = 4483362458,
+                })
+            end
+        end
+    end,
+})
+FlyTab:CreateSection("Info")
+FlyTab:CreateLabel("Source: github.com/XNEOFF/FlyGuiV3")
+FlyTab:CreateLabel("FlyGuiV3 has its own UI with speed controls and keybinds.")
+FlyTab:CreateLabel("Click Launch once per session. Use the fly GUI to toggle flight.")
+
+-- =============================================
+--// NOCLIP TAB \\--
+-- =============================================
+
+local NoclipTab = Window:CreateTab("👻 Noclip", 4483362458)
+NoclipTab:CreateSection("Walk Through Walls")
+NoclipTab:CreateParagraph({
+    Title   = "How It Works",
+    Content = "Disables collision on your character every Stepped tick so you can walk through walls, floors, and objects. Combine with Fly for full ghost movement. Disable to restore collision instantly.",
+})
+NoclipTab:CreateToggle({
+    Name = "Enable Noclip", CurrentValue = false, Flag = "NoclipEnabled",
+    Callback = function(val)
+        NoclipSettings.Enabled = val
+        setNoclip(val)
+        if val then
+            Rayfield:Notify({ Title = "Noclip ON 👻", Content = "Collision disabled. Walk through anything.", Duration = 3, Image = 4483362458 })
+        else
+            Rayfield:Notify({ Title = "Noclip OFF", Content = "Collision restored.", Duration = 3, Image = 4483362458 })
+        end
+        updateOverlay()
+    end,
+})
+NoclipTab:CreateSection("Tips")
+NoclipTab:CreateLabel("Combine with 🛸 Fly tab for full ghost movement.")
+NoclipTab:CreateLabel("Collision restored automatically when toggled off.")
+NoclipTab:CreateLabel("Disabling near a floor may cause you to fall — use Fly first.")
+
+-- =============================================
+--// BOOST FPS TAB \\--
+-- =============================================
+
+local FpsTab = Window:CreateTab("⚡ Boost FPS", 4483362458)
+FpsTab:CreateSection("Performance")
+FpsTab:CreateParagraph({ Title = "FPS Booster", Content = "Snapshots visuals first, then strips shadows, textures, particles and lighting for max FPS. Hit Undo to restore everything without rejoining." })
+FpsTab:CreateButton({ Name = "Apply FPS Boost", Callback = function()
+    if FpsSnapshot.Applied then Rayfield:Notify({ Title = "Already Applied", Content = "Hit Undo FPS Boost first.", Duration = 3, Image = 4483362458 }); return end
+    Rayfield:Notify({ Title = "Applying FPS Boost... ⚡", Content = "Snapshotting then stripping visuals.", Duration = 4, Image = 4483362458 })
+    takeSnapshot(); FpsSnapshot.Applied = true
+    pcall(function() setfpscap(999999999) end)
+    for _, v in next, Workspace:GetDescendants() do stripDescendant(v) end
+    for _, v in next, game:GetService("Lighting"):GetDescendants() do
+        pcall(function()
+            if v:IsA("Sky") or v:IsA("Atmosphere") or v:IsA("BloomEffect") or v:IsA("BlurEffect")
+            or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect") or v:IsA("Clouds")
+            or v:IsA("PostEffect") or v:IsA("ColorCorrectionEffect") then v:Destroy() end
+        end)
+    end
+    pcall(function() local L=game:GetService("Lighting"); sethiddenproperty(L,"Technology",2); L.GlobalShadows=false; L.FogEnd=9e9; L.Brightness=0 end)
+    pcall(function() local T=Workspace:FindFirstChildOfClass("Terrain"); if T then sethiddenproperty(T,"Decoration",false); T.WaterReflectance=0; T.WaterTransparency=0.7; T.WaterWaveSize=0; T.WaterWaveSpeed=0 end end)
+    FpsSnapshot.DescConnection = Workspace.DescendantAdded:Connect(function(v) task.defer(function() stripDescendant(v) end) end)
+    Rayfield:Notify({ Title = "FPS Boost Applied ✅", Content = "Visuals stripped. Press Undo to restore.", Duration = 4, Image = 4483362458 })
+end })
+FpsTab:CreateButton({ Name = "Undo FPS Boost", Callback = function()
+    if not FpsSnapshot.Applied then Rayfield:Notify({ Title = "Nothing to Undo", Content = "Apply FPS Boost first.", Duration = 3, Image = 4483362458 }); return end
+    if FpsSnapshot.DescConnection then FpsSnapshot.DescConnection:Disconnect(); FpsSnapshot.DescConnection = nil end
+    for _, s in ipairs(FpsSnapshot.Parts)   do pcall(function() if s.inst and s.inst.Parent then s.inst.CastShadow=s.CastShadow; s.inst.Material=s.Material; s.inst.Reflectance=s.Reflectance; s.inst.MaterialVariant=s.MaterialVariant end end) end
+    for _, s in ipairs(FpsSnapshot.Meshes)  do pcall(function() if s.inst and s.inst.Parent then s.inst.CastShadow=s.CastShadow; s.inst.DoubleSided=s.DoubleSided; s.inst.RenderFidelity=s.RenderFidelity; s.inst.TextureID=s.TextureID end end) end
+    for _, s in ipairs(FpsSnapshot.Decals)  do pcall(function() if s.inst and s.inst.Parent then s.inst.Transparency=s.Transparency end end) end
+    for _, s in ipairs(FpsSnapshot.Effects) do pcall(function() if s.inst and s.inst.Parent then s.inst.Enabled=s.Enabled end end) end
+    pcall(function() local L=game:GetService("Lighting"); sethiddenproperty(L,"Technology",4); L.GlobalShadows=FpsSnapshot.Lighting.GlobalShadows; L.FogEnd=FpsSnapshot.Lighting.FogEnd; L.Brightness=FpsSnapshot.Lighting.Brightness end)
+    pcall(function() local T=Workspace:FindFirstChildOfClass("Terrain"); if T and FpsSnapshot.Terrain then sethiddenproperty(T,"Decoration",true); T.WaterReflectance=FpsSnapshot.Terrain.WaterReflectance; T.WaterTransparency=FpsSnapshot.Terrain.WaterTransparency; T.WaterWaveSize=FpsSnapshot.Terrain.WaterWaveSize; T.WaterWaveSpeed=FpsSnapshot.Terrain.WaterWaveSpeed end end)
+    FpsSnapshot.Applied = false
+    Rayfield:Notify({ Title = "FPS Boost Undone ↩️", Content = "Visuals restored to original state.", Duration = 4, Image = 4483362458 })
+end })
+FpsTab:CreateSection("Info")
+FpsTab:CreateLabel("Snapshots visuals before stripping. Undo restores without rejoining.")
+
+-- =============================================
+--// INFINITE YIELD TAB \\--
+-- =============================================
+
+local IYTab = Window:CreateTab("⚙️ Infinite Yield", 4483362458)
+IYTab:CreateSection("Admin Commands")
+IYTab:CreateParagraph({ Title = "Infinite Yield", Content = "Loads Infinite Yield — a free and open source Roblox admin script with hundreds of commands." })
+IYTab:CreateButton({ Name = "Load Infinite Yield", Callback = function()
+    Rayfield:Notify({ Title = "Loading Infinite Yield... ⚙️", Content = "Please wait while IY loads.", Duration = 4, Image = 4483362458 })
+    pcall(function() loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))() end)
+end })
+IYTab:CreateSection("Info")
+IYTab:CreateLabel("Source: github.com/EdgeIY/infiniteyield")
+
+-- =============================================
+--// JOIN CLASS S TAB \\--
+-- =============================================
+
+local CLASS_S_GAME_ID = 7230787006
+local JoinTab = Window:CreateTab("🏆 Join Class S", 4483362458)
+JoinTab:CreateSection("Teleport")
+JoinTab:CreateParagraph({ Title = "Class S Server", Content = "Teleports you directly to the Class S game. Make sure you meet the requirements before joining." })
+JoinTab:CreateButton({ Name = "Join Class S Now", Callback = function()
+    Rayfield:Notify({ Title = "Teleporting... 🚀", Content = "Joining Class S server.", Duration = 3, Image = 4483362458 })
+    task.wait(1); pcall(function() TeleportService:Teleport(CLASS_S_GAME_ID, Player) end)
+end })
+JoinTab:CreateSection("Info")
+JoinTab:CreateLabel("Game ID: "..tostring(CLASS_S_GAME_ID))
+
+-- =============================================
+--// CONFIG PROFILES TAB \\--
+-- =============================================
+
+local ProfileTab = Window:CreateTab("💾 Profiles", 4483362458)
+ProfileTab:CreateSection("Config Profiles")
+ProfileTab:CreateParagraph({
+    Title   = "How Profiles Work",
+    Content = "Profiles save your current rejoin settings under a named slot.\n\nFiles saved to: ZebraBoxingLeague/Profiles/",
+})
+ProfileTab:CreateDropdown({
+    Name = "Select Profile Slot", Options = ProfileSettings.Names, CurrentOption = "Default", Flag = "SelectedProfile",
+    Callback = function(option) ProfileSettings.Current = option end,
+})
+ProfileTab:CreateButton({ Name = "💾 Save Current Settings to Slot", Callback = function()
+    saveProfile(ProfileSettings.Current)
+    Rayfield:Notify({ Title = "Profile Saved ✅", Content = "Saved to: "..ProfileSettings.Current, Duration = 3, Image = 4483362458 })
+end })
+ProfileTab:CreateButton({ Name = "📂 Load Settings from Slot", Callback = function()
+    local ok = loadProfile(ProfileSettings.Current)
+    if ok then
+        Rayfield:Notify({ Title = "Profile Loaded ✅", Content = "Loaded: "..ProfileSettings.Current.."\nRestart active toggles to apply new values.", Duration = 4, Image = 4483362458 })
+    else
+        Rayfield:Notify({ Title = "No Save Found ❌", Content = "Profile '"..ProfileSettings.Current.."' has no saved data yet. Save it first.", Duration = 4, Image = 4483362458 })
+    end
+end })
+ProfileTab:CreateSection("What Gets Saved")
+ProfileTab:CreateParagraph({ Title = "Saved Settings", Content = "• Auto Rejoin delay + method + load script flag" })
+ProfileTab:CreateSection("Info")
+ProfileTab:CreateLabel("Toggle values (on/off) use Rayfield's built-in config. Profiles store numeric and option settings only.")
+
+-- =============================================
+--// OVERLAY TAB \\--
+-- =============================================
+
+local OverlayTab = Window:CreateTab("🎮 Overlay", 4483362458)
+OverlayTab:CreateSection("Keybind HUD")
+OverlayTab:CreateParagraph({ Title = "Draggable Keybind HUD", Content = "A live HUD showing ✅/❌ status for every toggle, current keybinds for Clash and Camera, and a session timer. Drag the title bar to reposition. Click – to collapse." })
+OverlayTab:CreateToggle({
+    Name = "Show Keybind Overlay", CurrentValue = false, Flag = "ShowOverlay",
+    Callback = function(val) OverlayFrame.Visible = val end,
+})
+OverlayTab:CreateSection("Rayfield Window Keybind")
+OverlayTab:CreateParagraph({ Title = "Hide / Show Rayfield", Content = "Press RightShift (default) to instantly hide or show the Rayfield window. Change the key below." })
+OverlayTab:CreateButton({ Name = "Set Rayfield Toggle Key (click then press a key)", Callback = function()
+    Rayfield:Notify({ Title = "Listening...", Content = "Press the key you want to show/hide Rayfield.", Duration = 4, Image = 4483362458 })
+    local conn
+    conn = UIS.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            local kc = input.KeyCode
+            if kc ~= Enum.KeyCode.LeftShift and kc ~= Enum.KeyCode.RightShift
+            and kc ~= Enum.KeyCode.LeftControl and kc ~= Enum.KeyCode.RightControl
+            and kc ~= Enum.KeyCode.LeftAlt and kc ~= Enum.KeyCode.RightAlt then
+                conn:Disconnect()
+                RayfieldKeybindSettings.Key = kc
+                Rayfield:Notify({ Title = "Rayfield Key Set ✅", Content = "Show/hide is now ["..kc.Name.."]", Duration = 3, Image = 4483362458 })
+            end
+        end
+    end)
+end })
+OverlayTab:CreateSection("Info")
+OverlayTab:CreateLabel("HUD updates live whenever you change a keybind or toggle a feature.")
+OverlayTab:CreateLabel("Session timer resets only when the script is re-executed.")
+
+-- =============================================
+--// CREDITS TAB \\--
+-- =============================================
+
+local CreditsTab = Window:CreateTab("⭐ Credits", 4483362458)
+CreditsTab:CreateSection("Developer")
+CreditsTab:CreateParagraph({ Title = "By Zebra 🦓", Content = "All features designed, written and maintained by Zebra. Thanks for using the script — hope it treats you well in the gym!" })
+CreditsTab:CreateSection("Features")
+CreditsTab:CreateParagraph({ Title = "🥊 Dex Training",    Content = "Custom draggable Dex Farm GUI. Select BOX1/BOX2/BOX3 — the chosen bag glows orange-red in the world so you always know which is active. Toggle the Bag Highlight pill inside the GUI to turn the glow on or off at any time. Reads the orange target, auto-punches with heavy+light hits until goal is reached. Fully built-in." })
+CreditsTab:CreateParagraph({ Title = "⚔️ Auto Clash",      Content = "Auto clicks all clash buttons until green, then presses \\ to exit navigation automatically." })
+CreditsTab:CreateParagraph({ Title = "📷 Broken Camera",   Content = "Freezes camera in place on lock-on so it never follows your opponent." })
+CreditsTab:CreateParagraph({ Title = "🛡️ Anti AFK",        Content = "Custom draggable panel with pill toggle, status dot, and slide-in notifications. Fully built-in using VirtualUser — no external scripts." })
+CreditsTab:CreateParagraph({ Title = "🔄 Auto Rejoin",     Content = "Rejoins on kick — SameServer or NewServer mode. Optionally reloads this script automatically on arrival." })
+CreditsTab:CreateParagraph({ Title = "🔌 Auto Reconnect",  Content = "Extended disconnect detection: CoreGui error screens, PlayerRemoving, AncestryChanged kicks, and Heartbeat timeout watchdog." })
+CreditsTab:CreateParagraph({ Title = "🏋️ Auto Train",      Content = "Loads external Auto Train script via loadstring on demand. Click Launch in the tab to activate." })
+CreditsTab:CreateParagraph({ Title = "🛸 Fly",             Content = "Loads FlyGuiV3 by XNEOFF via loadstring. Full-featured fly GUI with its own controls." })
+CreditsTab:CreateParagraph({ Title = "👻 Noclip",          Content = "Disables character collision every physics tick. Walk through walls and floors. Fully reversible." })
+CreditsTab:CreateParagraph({ Title = "⚡ Boost FPS",       Content = "Strips visuals for maximum FPS. Fully undoable without rejoining the game." })
+CreditsTab:CreateParagraph({ Title = "💾 Config Profiles", Content = "Save and load named setting profiles stored as JSON files on disk." })
+CreditsTab:CreateParagraph({ Title = "🎮 Keybind HUD",     Content = "Draggable overlay showing live ✅/❌ for every toggle, keybinds, and session timer." })
+CreditsTab:CreateSection("Third Party")
+CreditsTab:CreateParagraph({ Title = "Rayfield UI",    Content = "UI library by Sirius — loaded from sirius.menu/rayfield." })
+CreditsTab:CreateParagraph({ Title = "FlyGuiV3",       Content = "Fly script by XNEOFF — loaded on demand from GitHub." })
+CreditsTab:CreateParagraph({ Title = "Infinite Yield", Content = "Open source admin script by EdgeIY — loaded on demand from GitHub." })
+
+-- =============================================
+--// CLEANUP \\--
+-- =============================================
+
+Player.CharacterRemoving:Connect(function()
+    stopAutoClash()
+    if CameraSettings.BrokenCamera then CameraSettings.BrokenCamera = false; stopLockOnWatcher() end
+    if NoclipSettings.Enabled then setNoclip(false) end
+end)
+
+updateOverlay()
+
+Rayfield:Notify({
+    Title   = "Boxing League ✅",
+    Content = "Loaded! By Zebra. RightShift = hide/show UI. Dex Farm in 🥊 tab.",
+    Duration = 5,
+    Image   = 4483362458,
+})
